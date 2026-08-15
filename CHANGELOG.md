@@ -138,3 +138,32 @@ relying on it.
   restricted, koi Google domain allowed nahi)
 - ⚠️ Live AgentRouter/fallback call — NAHI test hua (same wajah). Deploy
   se pehle `python3 verify_fallback_provider.py` khud chalayein.
+
+  ## Next-phase build — Section 1: schema migration (Aug 2026)
+
+**5. `question_log` mein 3 naye columns (`student_id`, `used_full_reveal`,
+`mode`) add — per-student identity, scaffolding-engagement tracking, aur
+question-vs-diagnosis mode ke liye foundation. Schema-only phase; koi
+caller in columns ko abhi populate nahi karta.**
+Pehle: `_SCHEMA` sirf `CREATE TABLE IF NOT EXISTS` tha — production Turso
+DB mein table already exist karti hai (dono live apps ise share karte
+hain), isliye sirf naye columns schema-string mein add karna production
+ko crash karta (`no column named student_id` pehle INSERT par).
+Ab: `_SCHEMA` (fresh DBs ke liye) aur `_apply_migrations()` — idempotent
+`ALTER TABLE ADD COLUMN` list (existing production tables ke liye) —
+dono ek saath. `_apply_migrations()` sirf "duplicate column"/"already
+exists" errors ko ignore karta hai, baaki sab raise karta hai (Turso
+connection-fail jaisi cheezein chup nahi honi chahiyein). `log_question()`
+naye params optional hain, defaults ke saath (`student_id=None`,
+`used_full_reveal=None`, `mode="question"`) — purane call sites (`app.py`,
+`dashboard.py`) bina badle chalte rehte hain.
+Verified: `tests/test_question_log_store.py::TestSchemaMigration` — 4 naye
+tests, jisme sabse important scenario explicitly cover hota hai: ek
+purani (pre-migration) table simulate ki gayi, `QuestionLogStore` usse
+connect kiya gaya, confirm kiya gaya ke naye columns add hue bina crash
+ya purana data khoye. Poora suite: `pytest tests/` — 95/95 pass.
+⚠️ Deploy se pehle production Turso DB ka backup lein
+(`turso db shell <db-name> ".dump" > backup.sql`) aur khud confirm karein
+ke Turso ka "duplicate column" error-wording is sandbox ke SQLite
+wording se match karta hai (is sandbox mein live Turso test nahi ho
+saka — same restriction jo Bug pattern mein pehle bhi note hui hai).

@@ -80,3 +80,89 @@ class TestQuestionLogStore:
         df = store2.get_dataframe()
         assert len(df) == 1
         assert df.iloc[0]["question"] == "from store1"
+
+
+class TestSchemaMigration:
+    """Section 1 (Aug 2026): student_id/used_full_reveal/mode columns.
+    Sabse important scenario: production Turso table 'question_log'
+    ALREADY EXISTS bina in columns ke (dono live apps abhi use kar rahe
+    hain). CREATE TABLE IF NOT EXISTS is case mein kuch nahi karta —
+    migration ko explicitly ye columns add karne hain, bina crash kiye,
+    aur bina purana data ganwaye."""
+
+    def test_migration_adds_columns_to_pre_existing_old_schema_table(self, tmp_path):
+        import sqlite3
+
+        db_path = str(tmp_path / "old_schema.db")
+        conn = sqlite3.connect(db_path, check_same_thread=False)
+        # Purana (pre-migration) schema — jaisa abhi production Turso mein hai
+        conn.executescript("""
+            CREATE TABLE question_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                course TEXT NOT NULL,
+                question TEXT NOT NULL,
+                matched_chapter TEXT,
+                matched_section TEXT,
+                similarity REAL,
+                grounding TEXT,
+                verified TEXT,
+                repeated_confusion INTEGER,
+                from_cache INTEGER
+            );
+        """)
+        conn.execute(
+            "INSERT INTO question_log (timestamp, course, question, matched_chapter, "
+            "matched_section, similarity, grounding, verified, repeated_confusion, from_cache) "
+            "VALUES ('2026-08-01T09:00:00', 'Calculus', 'old question', 'Ch1', 'Sec1', 0.9, "
+            "'direct_from_notes', '', 0, 0)"
+        )
+        conn.commit()
+
+        # Ye simulate karta hai app restart / redeploy jab naya code purani table se milta hai
+        store = QuestionLogStore(connection=conn)
+
+        df = store.get_dataframe()
+        assert len(df) == 1
+        # Purani row zinda hai aur naye columns None hain — crash nahi hua
+        assert df.iloc[0]["question"] == "old question"
+        assert df.iloc[0]["student_id"] is None
+        assert df.iloc[0]["used_full_reveal"] is None
+        assert df.iloc[0]["mode"] is None
+
+    def test_migration_is_idempotent_across_repeated_instantiation(self, tmp_path):
+        # Streamlit Cloud har request/rerun par QuestionLogStore() naya
+        # instantiate kar sakta hai — migration baar baar chalne se
+        # crash nahi honi chahiye
+        db_path = str(tmp_path / "repeat.db")
+        QuestionLogStore(db_path)
+        QuestionLogStore(db_path)
+        store = QuestionLogStore(db_path)  # teesri baar bhi crash na ho
+        assert list(store.get_dataframe().columns) == COLUMNS
+
+    def test_new_columns_default_correctly_when_not_provided(self, store):
+        # Backward-compat: purane call sites (jo abhi naye params pass
+        # nahi karte) crash nahi karne chahiye, aur sensible defaults milne chahiyein
+        store.log_question(
+            timestamp="2026-08-15T10:00:00", course="Calculus", question="q",
+            matched_chapter="", matched_section="", similarity=0.5,
+            grounding="direct_from_notes", verified=None,
+            repeated_confusion=False, from_cache=False,
+        )
+        df = store.get_dataframe()
+        assert df.iloc[0]["student_id"] is None
+        assert df.iloc[0]["used_full_reveal"] is None
+        assert df.iloc[0]["mode"] == "question"
+
+    def test_new_columns_store_provided_values(self, store):
+        store.log_question(
+            timestamp="2026-08-15T10:00:00", course="Calculus", question="q",
+            matched_chapter="", matched_section="", similarity=0.5,
+            grounding="adapted_by_ai", verified=True,
+            repeated_confusion=False, from_cache=False,
+            student_id="Ali Raza", used_full_reveal=True, mode="diagnosis_v0",
+        )
+        df = store.get_dataframe()
+        assert df.iloc[0]["student_id"] == "Ali Raza"
+        assert df.iloc[0]["used_full_reveal"] == 1
+        assert df.iloc[0]["mode"] == "diagnosis_v0"
