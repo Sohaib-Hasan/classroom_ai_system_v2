@@ -201,3 +201,29 @@ hai, cross-device ya cross-day verified nahi — agar student kal alag
 naam type kare, system usse alag learner samjhega. Ye jaan-boojh kar
 hai (pseudonymous, no-auth design), lekin dashboard analysis karte
 waqt yaad rakhna.
+## Bug fix — "Change name" ke baad purani chat reh jati thi (16 Aug 2026)
+
+**7. Mentor ne review mein catch kiya:** "Not you? Change name" button
+sirf `student_id` clear karta tha, `st.session_state.messages` nahi.
+Exactly usi shared/lab-computer scenario mein jiske liye ye button bana
+tha — Student A poochta, "Change name" dabata, Student B apna naam
+likhta — Student B ko Student A ki poori purani chat screen par dikhti
+rehti thi, jab tak course na badle ya "Start a new topic" na dabaya
+jaye. Database-level logging sahi thi (naya sawaal sahi naye
+`student_id` ke sath log hota), lekin UI-level privacy leak thi — jo
+button ka poora point hi undermine kar rahi thi.
+Important note jo mentor ne khud kaha: pichle commit ka "95/95 pass"
+is bug ko catch **nahi** karta tha — koi test is specific scenario ko
+cover nahi karta tha, isliye green suite hona iske na-hone ka proof
+nahi tha.
+Fix: `session_helpers.py` (nayi file) mein `reset_identity()` — chhota,
+Streamlit-independent, pure function jo `student_id` AUR `messages`
+dono clear karta hai. Alag file mein isliye banaya kyunke `app.py` khud
+top-level Streamlit script hai (import hote hi PIN gate/`st.secrets`
+chal jate hain) — seedha `app.py` se import karke test karna fragile
+hai. `session_helpers.py` mein koi Streamlit-dependency nahi, isliye
+plain pytest se test hota hai.
+Verified: `tests/test_session_helpers.py` — 3 naye tests, jisme se ek
+explicitly ye check karta hai ke agar `messages`-clear wali line hata
+di jaye to test fail ho jata hai (khud verify kiya, purana buggy
+version reproduce kar ke). Poori suite: 98/98 pass.

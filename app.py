@@ -344,6 +344,7 @@ with st.sidebar:
     st.caption(f"👤 {st.session_state.student_id}")
     if st.button("Not you? Change name"):
         st.session_state.student_id = None
+        st.session_state.messages = []
         st.rerun()
 
     st.markdown("**Course**")
