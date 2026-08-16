@@ -54,6 +54,7 @@ from generation_backend import get_generation_backend
 from knowledge_base_loader import load_knowledge_base
 from logging_setup import get_logger
 from question_log_store import QuestionLogStore
+from session_helpers import reset_identity
 
 try:
     # Streamlit Cloud pe deploy hone par yahan se milega (Secrets settings mein set karna hai)
@@ -213,13 +214,13 @@ def generate_answer(question, chunks, history):
 # ------------------------------------------------------------------
 # Logging (question activity — teacher dashboard ke liye)
 # ------------------------------------------------------------------
-def log_question(question, course, chunks, answer, verified, repeated, cached, student_id):
+def log_question(question, course, chunks, answer, verified, repeated, cached, student_id, used_full_reveal):
     # FIX (bug jo student ne report kiya): pehle CSV file mein likha jata
     # tha, jo alag-deployed teacher dashboard app ko kabhi nazar nahi
     # aati thi. Ab shared connection (local ya Turso) mein likhte hain —
     # dekhein db_connection.py aur question_log_store.py.
     top = chunks[0] if chunks else {}
-    get_question_log().log_question(
+    return get_question_log().log_question(
         timestamp=datetime.now().isoformat(),
         course=course,
         question=question,
@@ -231,13 +232,25 @@ def log_question(question, course, chunks, answer, verified, repeated, cached, s
         repeated_confusion=repeated,
         from_cache=cached,
         student_id=student_id,
+        used_full_reveal=used_full_reveal,
     )
 
 
 # ------------------------------------------------------------------
 # Display helpers
 # ------------------------------------------------------------------
-def show_answer(answer, lang_pref):
+def show_answer(turn, lang_pref, key, always_full=False):
+    """turn: dict jisme 'answer' hai, aur 'revealed'/'log_row_id' jo
+    yahi function mutate karta hai (dict mutation persist hoti hai
+    kyunke ye st.session_state.messages ka SAME object hai, copy nahi).
+
+    key: har turn ke liye UNIQUE string (jaise f"reveal_{i}") —
+    zaroori hai kyunke Streamlit har interaction par POORA script
+    rerun karta hai. Agar reveal-button ka key per-turn na ho, ek turn
+    reveal karna doosre turns ka bhi render/state confuse kar sakta
+    hai — dekhein CHANGELOG (16 Aug 2026 fix, "Not you? Change name"
+    jaisa hi ek class ka bug, per-turn state chahiye hoti hai)."""
+    answer = turn["answer"]
     verified = None
     if answer.grounding == "not_found":
         st.info("ℹ️ This topic wasn't found in your course notes.")
@@ -255,10 +268,34 @@ def show_answer(answer, lang_pref):
         st.caption("✅ Directly matches an example in your notes.")
 
     if answer.grounding != "cross_course_redirect":
-        if lang_pref == "English":
-            st.markdown(answer.english)
+        # Scaffolding (build-order item 3): has_scaffold False hoga
+        # purane cached answers ke liye (feature se pehle cache hue,
+        # hint/guiding_question field hi nahi thi) AUR not_found ke
+        # liye (jo app.py mein manually construct hota hai, AI call se
+        # nahi guzarta) — dono cases mein seedha full answer dikhate
+        # hain, khaali scaffold screen nahi.
+        has_scaffold = bool(answer.hint and answer.guiding_question)
+        show_full = always_full or not has_scaffold or turn.get("revealed", False)
+
+        if not show_full:
+            st.markdown(f"💡 **Hint:** {answer.hint}")
+            st.markdown(f"🤔 **Think about:** {answer.guiding_question}")
+            if st.button("Show full solution", key=key):
+                turn["revealed"] = True
+                # Jab pehli baar log_question() chala tha, ye row abhi
+                # tak "revealed nahi hui" (used_full_reveal=0) ke tor
+                # par log hui thi. Ab, isi row ko update karte hain —
+                # nayi row nahi banate (ek sawaal = ek row).
+                try:
+                    get_question_log().mark_revealed(turn.get("log_row_id"))
+                except Exception:
+                    logger.exception("mark_revealed failed (reveal still shown to student)")
+                st.rerun()
         else:
-            st.markdown(answer.roman_urdu)
+            if lang_pref == "English":
+                st.markdown(answer.english)
+            else:
+                st.markdown(answer.roman_urdu)
 
     fig = render_visual(answer)
     if fig:
@@ -343,8 +380,9 @@ cache = get_cache()
 with st.sidebar:
     st.caption(f"👤 {st.session_state.student_id}")
     if st.button("Not you? Change name"):
-        st.session_state.student_id = None
-        st.session_state.messages = []
+        # student_id AUR messages dono clear karta hai (dekhein
+        # session_helpers.reset_identity docstring — 16 Aug 2026 fix)
+        reset_identity(st.session_state)
         st.rerun()
 
     st.markdown("**Course**")
@@ -354,6 +392,10 @@ with st.sidebar:
     lang_pref = st.radio(
         "Answer language", ["English", "Roman Urdu"], index=0, label_visibility="collapsed",
     )
+    # Scaffolding (build-order item 3, Aug 2026): default hint-first hai,
+    # lekin kuch students seedha full answer prefer karte hain — mentor
+    # ke plan ke mutabiq "default, not only mode".
+    always_full = st.checkbox("Always show full solutions (skip hints)")
     if st.button("Start a new topic"):
         st.session_state.messages = []
         st.rerun()
@@ -362,11 +404,11 @@ if "messages" not in st.session_state or st.session_state.get("course") != selec
     st.session_state.messages = []
     st.session_state.course = selected_course
 
-for turn in st.session_state.messages:
+for i, turn in enumerate(st.session_state.messages):
     with st.chat_message("user"):
         st.markdown(turn["question"])
     with st.chat_message("assistant"):
-        show_answer(turn["answer"], lang_pref)
+        show_answer(turn, lang_pref, key=f"reveal_{i}", always_full=always_full)
         if turn["answer"].grounding not in ("not_found", "cross_course_redirect"):
             with st.expander("Sources used from notes"):
                 for c in turn["chunks"]:
@@ -459,6 +501,22 @@ if question:
 
                         verified = verify_computation(answer.computation_expression, answer.computation_result)
 
+                # Scaffolding (build-order item 3, Aug 2026): turn dict ab
+                # yahan banta hai (pehle sirf block ke bilkul aakhir mein
+                # banta tha) taake show_answer() ko ek CONSISTENT interface
+                # mil sake — chahe ye turn abhi live dikh raha ho ya baad
+                # mein history-loop se re-render ho. "revealed"/"log_row_id"
+                # dono is turn-dict mein rehte hain (session_state.messages
+                # ka hi hissa, isliye persist hote hain).
+                st.session_state.messages.append(
+                    {
+                        "question": question, "answer": answer, "chunks": chunks,
+                        "query_vec": query_vec, "revealed": False, "log_row_id": None,
+                    }
+                )
+                turn = st.session_state.messages[-1]
+                reveal_key = f"reveal_{len(st.session_state.messages) - 1}"
+
                 # FIX (bug jo review mein mila tha): log_question() pehle isi
                 # try block mein tha jo answer dikhata hai — matlab agar
                 # sirf LOGGING fail ho (jaise Turso ka koi transient masla),
@@ -467,15 +525,16 @@ if question:
                 # logging apni alag try/except mein hai — fail ho to bhi
                 # answer zaroor dikhega, sirf ek chhota warning log hoga.
                 try:
-                    log_question(
+                    has_scaffold = bool(answer.hint and answer.guiding_question)
+                    turn["log_row_id"] = log_question(
                         question, selected_course, chunks, answer, verified, repeated,
                         cached_hit is not None, st.session_state.student_id,
+                        used_full_reveal=(always_full or not has_scaffold),
                     )
-                    
                 except Exception:
                     logger.exception(f"log_question failed (answer still shown): course={selected_course!r}, question={question!r}")
 
-                show_answer(answer, lang_pref)
+                show_answer(turn, lang_pref, key=reveal_key, always_full=always_full)
                 if cross_suggestion:
                     st.info(f"Related content found in **{cross_suggestion}** — you may want to check there too.")
                 if answer.grounding not in ("not_found", "cross_course_redirect"):
@@ -489,7 +548,3 @@ if question:
                 logger.exception(f"Failed to answer question in course={selected_course!r}: {question!r}")
                 st.error("The system is busy right now — please wait a few seconds and try again.")
                 st.stop()
-
-    st.session_state.messages.append(
-        {"question": question, "answer": answer, "chunks": chunks, "query_vec": query_vec}
-    )

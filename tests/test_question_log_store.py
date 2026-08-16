@@ -166,3 +166,46 @@ class TestSchemaMigration:
         assert df.iloc[0]["student_id"] == "Ali Raza"
         assert df.iloc[0]["used_full_reveal"] == 1
         assert df.iloc[0]["mode"] == "diagnosis_v0"
+
+class TestRevealTracking:
+    """Section 3 (scaffolding, Aug 2026): log_question() ab row id
+    return karta hai, aur mark_revealed() us row ko baad mein update
+    kar sakta hai — jab student turant nahi, thodi der baad "Show full
+    solution" click kare (ek alag Streamlit rerun mein)."""
+
+    def test_log_question_returns_a_row_id(self, store):
+        row_id = store.log_question(
+            timestamp="2026-08-16T10:00:00", course="Calculus", question="q",
+            matched_chapter="", matched_section="", similarity=0.5,
+            grounding="adapted_by_ai", verified=None,
+            repeated_confusion=False, from_cache=False,
+        )
+        assert row_id is not None
+        assert isinstance(row_id, int)
+
+    def test_mark_revealed_updates_only_the_targeted_row(self, store):
+        row_id_1 = store.log_question(
+            timestamp="2026-08-16T10:00:00", course="Calculus", question="q1",
+            matched_chapter="", matched_section="", similarity=0.5,
+            grounding="adapted_by_ai", verified=None,
+            repeated_confusion=False, from_cache=False, used_full_reveal=False,
+        )
+        row_id_2 = store.log_question(
+            timestamp="2026-08-16T10:01:00", course="Calculus", question="q2",
+            matched_chapter="", matched_section="", similarity=0.5,
+            grounding="adapted_by_ai", verified=None,
+            repeated_confusion=False, from_cache=False, used_full_reveal=False,
+        )
+
+        store.mark_revealed(row_id_1)
+
+        df = store.get_dataframe().set_index("question")
+        assert df.loc["q1", "used_full_reveal"] == 1  # click hua
+        assert df.loc["q2", "used_full_reveal"] == 0  # ye touch nahi hui
+        assert row_id_1 != row_id_2
+
+    def test_mark_revealed_with_none_is_a_safe_noop(self, store):
+        # app.py mein agar kabhi log_row_id capture na ho paya ho (jaise
+        # logging khud fail ho gayi thi try/except mein), mark_revealed
+        # ko None mil sakta hai — crash nahi hona chahiye
+        store.mark_revealed(None)  # crash na ho, bas itna hi check hai

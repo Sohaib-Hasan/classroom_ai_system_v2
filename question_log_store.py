@@ -99,8 +99,14 @@ class QuestionLogStore:
     def log_question(self, timestamp, course, question, matched_chapter, matched_section,
                       similarity, grounding, verified, repeated_confusion, from_cache,
                       student_id=None, used_full_reveal=None, mode="question"):
+        """Return karta hai naye row ka id (SQLite ya Turso dono se
+        `.lastrowid` milta hai — dekhein db_connection.py). Scaffolding
+        feature (build-order item 3) isse `mark_revealed()` ke liye
+        use karta hai — jab student baad mein "Show full solution"
+        click kare (ek alag Streamlit rerun mein), to hum NAYI row nahi
+        banate, isi row ko update karte hain."""
         with self._lock:
-            self._conn.execute(
+            cursor = self._conn.execute(
                 "INSERT INTO question_log "
                 "(timestamp, course, question, matched_chapter, matched_section, "
                 "similarity, grounding, verified, repeated_confusion, from_cache, "
@@ -116,6 +122,21 @@ class QuestionLogStore:
                     None if used_full_reveal is None else int(bool(used_full_reveal)),
                     mode,
                 ),
+            )
+            self._conn.commit()
+            return cursor.lastrowid
+
+    def mark_revealed(self, row_id):
+        """Scaffolding (build-order item 3): jab student "Show full
+        solution" par click kare, us specific row ka used_full_reveal
+        1 par update karta hai — NAYI row nahi banate (ek sawaal = ek
+        row, chahe reveal turant ho ya baad mein)."""
+        if row_id is None:
+            return
+        with self._lock:
+            self._conn.execute(
+                "UPDATE question_log SET used_full_reveal = 1 WHERE id = ?",
+                (row_id,),
             )
             self._conn.commit()
 

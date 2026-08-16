@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from core import (
+    TutorAnswer,
     cosine_sim_matrix,
     decide_retrieval_strategy,
     math_signature,
@@ -252,3 +253,47 @@ class TestTruncateForEmbedding:
         text, truncated = truncate_for_embedding(long_text, max_chars=100)
         assert len(text) == 100
         assert truncated is True
+
+class TestTutorAnswerScaffoldingBackwardCompat:
+    """hint/guiding_question Optional[str]=None hain — do purani cheezein
+    inhe kabhi nahi bharengi: (1) cache mein pehle se pada JSON (feature
+    se pehle cache hua, in keys ke bina), (2) not_found/cross_course_
+    redirect jo app.py mein manually construct hote hain, AI call se
+    nahi guzarte. Dono cases crash nahi hone chahiyein."""
+
+    def test_old_cached_answer_without_hint_fields_loads_fine(self):
+        # cache_store.py `answer.model_dump_json()` se save karta hai,
+        # `TutorAnswer(**cached_dict)` se wapas load karta hai (app.py).
+        # Feature se pehle cache hui koi bhi row mein 'hint'/
+        # 'guiding_question' keys hi nahi hongi.
+        old_cached_json = {
+            "english": "The derivative is 2x.",
+            "roman_urdu": "Derivative 2x hai.",
+            "grounding": "direct_from_notes",
+        }
+        answer = TutorAnswer(**old_cached_json)
+        assert answer.hint is None
+        assert answer.guiding_question is None
+
+    def test_not_found_answer_has_no_scaffold_fields(self):
+        # app.py mein "not_found" grounding manually construct hoti hai,
+        # AI/SYSTEM_INSTRUCTION se nahi guzarti — hint/guiding_question
+        # kabhi set nahi honge.
+        answer = TutorAnswer(
+            english="I couldn't find this in your course notes.",
+            roman_urdu="Ye mujhe notes mein nahi mila.",
+            grounding="not_found",
+        )
+        assert answer.hint is None
+        assert answer.guiding_question is None
+
+    def test_new_answer_with_scaffold_fields_works(self):
+        answer = TutorAnswer(
+            english="The derivative is 2x.",
+            roman_urdu="Derivative 2x hai.",
+            grounding="direct_from_notes",
+            hint="Think about the power rule.",
+            guiding_question="What happens to the exponent when you differentiate x^2?",
+        )
+        assert answer.hint == "Think about the power rule."
+        assert answer.guiding_question is not None

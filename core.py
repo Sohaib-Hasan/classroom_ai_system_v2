@@ -55,6 +55,14 @@ MAX_EMBED_CHARS = 6500
 class TutorAnswer(BaseModel):
     english: str
     roman_urdu: str
+    # Scaffolding (build-order item 3, Aug 2026): Optional hai jaan-boojh
+    # kar — purane cached answers (feature se pehle cache hue) aur
+    # not_found/cross_course_redirect (jo app.py mein manually construct
+    # hote hain, AI call se nahi guzarte) mein ye None honge. app.py ki
+    # show_answer() is None-case ko explicitly handle karti hai (seedha
+    # full answer dikhati hai, khaali scaffold screen nahi).
+    hint: Optional[str] = None
+    guiding_question: Optional[str] = None
     grounding: str  # "direct_from_notes", "adapted_by_ai", ya "not_found"
     computation_expression: Optional[str] = None
     computation_result: Optional[str] = None
@@ -102,13 +110,29 @@ Always respond with:
    wrap every math expression/symbol in $...$ using real LaTeX, e.g.
    "$\\gcd(m,n)$ nikalein pehle". Keep the Roman Urdu prose itself plain
    text; only the math parts go in $...$.
-3. "grounding": exactly one of:
+3. "hint": a short, one-to-two sentence nudge toward the FIRST step of
+   solving this — enough to get an unstuck student moving, WITHOUT
+   giving away the method or the final answer. E.g. for a derivative
+   question: "Think about which differentiation rule applies here — is
+   this a product of two functions, or a single one?" NOT "Use the
+   product rule and differentiate each term." Same $...$ LaTeX rule as
+   above for any math symbols.
+4. "guiding_question": one short question that prompts the student to
+   attempt the next step themselves, e.g. "What do you get if you
+   differentiate $x^2$ on its own?" It should feel like something a
+   teacher would ask out loud, not a restatement of the hint.
+   ALWAYS fill both "hint" and "guiding_question", even for
+   conceptual/proof/definition questions — a student sees these FIRST,
+   and only sees the full "english"/"roman_urdu" explanation if they
+   ask for it. Never simply reveal the answer as the default — the
+   hint/guiding-question step should always come first.
+5. "grounding": exactly one of:
    - "direct_from_notes": your answer directly follows a definition, theorem,
      or worked example in the notes, with the same or very similar numbers.
    - "adapted_by_ai": the question uses different numbers/values/setup than
      the notes, so you had to compute the specific result yourself. Even a
      small change in numbers counts as "adapted_by_ai" — be strict and honest.
-4. If grounding is "adapted_by_ai" AND the question is a well-defined
+6. If grounding is "adapted_by_ai" AND the question is a well-defined
    calculation (a derivative, integral, determinant, solving an equation,
    simplifying an expression, a congruence, a counting/combinatorics result,
    etc.), also provide:
@@ -125,7 +149,7 @@ Always respond with:
    Only fill these two fields if you're confident they are valid syntax;
    otherwise leave both as null. Leave both null for conceptual/proof/
    definition questions.
-5. If the student explicitly asks to see/show/graph/plot/visualize/draw
+7. If the student explicitly asks to see/show/graph/plot/visualize/draw
    something, OR the question is inherently visual (curve sketching, vector
    geometry, a graph-theory structure with vertices/edges), fill "visual_type"
    with exactly one of:

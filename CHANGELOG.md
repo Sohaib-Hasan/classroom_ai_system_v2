@@ -227,3 +227,54 @@ Verified: `tests/test_session_helpers.py` — 3 naye tests, jisme se ek
 explicitly ye check karta hai ke agar `messages`-clear wali line hata
 di jaye to test fail ho jata hai (khud verify kiya, purana buggy
 version reproduce kar ke). Poori suite: 98/98 pass.
+
+## Next-phase build — Section 3: Scaffolded Answering Mode (Aug 2026)
+
+**8. Har jawab ab default hint → guiding question → full-solution reveal
+hota hai, seedha poora jawab nahi — mentor ke plan ke top-priority
+research-aligned feature.**
+`core.py`: `TutorAnswer` mein `hint`/`guiding_question` (Optional[str])
+add kiye; `SYSTEM_INSTRUCTION` ab inhe hamesha bharne ko kehta hai (naya
+point 3/4, baaki points renumber hue).
+`question_log_store.py`: `log_question()` ab insert kiya gaya row ka id
+return karta hai (SQLite aur Turso dono se `.lastrowid` milta hai —
+`db_connection.py` mein pehle se hi consistent tha, ye piece already
+tayyar thi). Naya `mark_revealed(row_id)` method us row ka
+`used_full_reveal` baad mein update karta hai — jab student turant nahi,
+kuch der baad "Show full solution" click kare, to NAYI row nahi banti,
+wahi row update hoti hai (ek sawaal = ek row, chahe reveal turant ho ya
+baad mein).
+`app.py`: `show_answer()` ab `(turn, lang_pref, key, always_full)` leta
+hai — pehle sirf `(answer, lang_pref)` leta tha. `turn` dict mein
+`revealed`/`log_row_id` bhi hain, aur mutate hone par persist hote hain
+(`st.session_state.messages` ka SAME object hai, copy nahi). `key` har
+turn ke liye UNIQUE hai (`f"reveal_{i}"`) — Streamlit har interaction
+par POORA script rerun karta hai, isliye per-turn state na ho to ek
+turn ka reveal doosre turns ke render ko confuse kar sakta tha (isi
+CLASS ka bug jo 16 Aug ke "Change name" fix mein tha). Turn dict ab
+question-flow ke SHURU mein banta hai aur turant `st.session_state.
+messages` mein append hota hai (pehle sirf block ke bilkul aakhir mein
+banta tha) — taake live turn aur history-loop turn dono EK HI interface
+(`turn` dict) se guzrein.
+Sidebar mein "Always show full solutions (skip hints)" checkbox —
+mentor ke plan ke mutabiq scaffolding *default* hai, *only mode* nahi.
+Backward compatibility (khud verify kiya, sirf claim nahi): purane
+cached answers (feature se pehle cache hue, `hint`/`guiding_question`
+keys hi nahi) aur `not_found` grounding (manually construct hoti hai,
+AI call se nahi guzarti) — dono cases mein `has_scaffold` False ban
+jata hai, seedha full answer dikhta hai, khaali scaffold screen nahi.
+`TutorAnswer(**old_cached_dict)` khud chala kar confirm kiya crash nahi
+hota.
+Verified: `tests/test_question_log_store.py::TestRevealTracking` (3
+naye tests — row id return hona, `mark_revealed` sirf targeted row
+update kare, `None` ke sath safe rahe) + `tests/test_core.py::
+TestTutorAnswerScaffoldingBackwardCompat` (3 naye tests — purana cache,
+`not_found`, naya scaffold-wala answer). Poori suite: 104/104 pass.
+`py_compile` + `pyflakes` clean on `app.py`, `core.py`,
+`question_log_store.py`.
+Open decision jo abhi tak nahi li gayi (dekhein plan doc Section 11,
+open decision #1): purana cache clear karna hai ya gradually replace
+hone dena hai — abhi gradually-replace default rakha hai (koi cache
+invalidation code nahi likha), kyunke backward-compat fallback already
+graceful hai. Agar zyada tezi se sab answers scaffold-wale chahiye hon,
+cache clear karna ek explicit, chhota alag step hoga.
