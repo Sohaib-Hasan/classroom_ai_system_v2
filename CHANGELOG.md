@@ -167,3 +167,37 @@ ya purana data khoye. Poora suite: `pytest tests/` — 95/95 pass.
 ke Turso ka "duplicate column" error-wording is sandbox ke SQLite
 wording se match karta hai (is sandbox mein live Turso test nahi ho
 saka — same restriction jo Bug pattern mein pehle bhi note hui hai).
+## Next-phase build — Section 2: per-student identity capture (Aug 2026)
+
+**6. `app.py` mein lightweight, pseudonymous student-identity gate — PIN
+ke baad, ek dafa naam/roll-number poochta hai, `st.session_state` mein
+rakhta hai, aur har `log_question()` call ke saath `student_id` pass
+karta hai.**
+Pehle: `question_log` mein koi student-level identity nahi thi — sirf
+class-level PIN. Matlab "kaun struggle kar raha hai" sirf class-average
+ke tor par pata chal sakta tha, kisi individual student ke tor par nahi.
+Ab: PIN gate ke turant baad ek chhota, PIN jaisa hi single-step gate —
+naam/roll-number required hai (khali nahi ja sakta), lekin koi
+password/roster-verification nahi (jaan-boojh kar — goal *consistency*
+hai, authentication nahi). Sidebar mein current naam dikhta hai aur ek
+"Not you? Change name" button hai — agar koi shared/lab computer use ho
+raha ho to ek student ka data doosre ke naam se log na ho.
+`log_question()` (dono wrapper aur `QuestionLogStore.log_question()`)
+ab `student_id` accept karte hain — Section 1 mein ye already
+optional/backward-compatible bana diya gaya tha, isliye ye sirf ek
+naya required positional argument add karna tha, koi aur jagah nahi
+tooti.
+Scope note: `dashboard.py` ko is turn mein jaan-boojh kar nahi chheda —
+per-student mastery view alag, baad ka item hai (build order #6) jo
+identity + diagnosis data dono chahta hai meaningful hone ke liye.
+Verified: poori suite `pytest tests/` — 95/95 pass (Section 1 ke
+`test_new_columns_store_provided_values` mein already `student_id`
+value store hone ka coverage hai). `py_compile` + `pyflakes` clean on
+`app.py`. Koi naya test file nahi chahiye tha — `app.py` khud is repo
+mein unit-tested nahi hai (Streamlit UI layer), uski underlying logic
+already `question_log_store.py` ke tests se covered hai.
+Limitation, honestly stated: ye identity **browser-session-scoped**
+hai, cross-device ya cross-day verified nahi — agar student kal alag
+naam type kare, system usse alag learner samjhega. Ye jaan-boojh kar
+hai (pseudonymous, no-auth design), lekin dashboard analysis karte
+waqt yaad rakhna.

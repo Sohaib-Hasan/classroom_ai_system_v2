@@ -213,7 +213,7 @@ def generate_answer(question, chunks, history):
 # ------------------------------------------------------------------
 # Logging (question activity — teacher dashboard ke liye)
 # ------------------------------------------------------------------
-def log_question(question, course, chunks, answer, verified, repeated, cached):
+def log_question(question, course, chunks, answer, verified, repeated, cached, student_id):
     # FIX (bug jo student ne report kiya): pehle CSV file mein likha jata
     # tha, jo alag-deployed teacher dashboard app ko kabhi nazar nahi
     # aati thi. Ab shared connection (local ya Turso) mein likhte hain —
@@ -230,6 +230,7 @@ def log_question(question, course, chunks, answer, verified, repeated, cached):
         verified=verified,
         repeated_confusion=repeated,
         from_cache=cached,
+        student_id=student_id,
     )
 
 
@@ -310,6 +311,29 @@ if not st.session_state.pin_ok:
             st.rerun()
     st.stop()
 
+# ------------------------------------------------------------------
+# Per-student identity (Section 2, Aug 2026) — lightweight, pseudonymous.
+# Goal is CONSISTENCY (same name = same learner within this browser
+# session, feeding student_id into question_log), NOT authentication —
+# no password, no roster check, no email. Same simple gate pattern as
+# PIN above, but no lockout/attempts needed (nothing to brute-force).
+# ------------------------------------------------------------------
+if "student_id" not in st.session_state:
+    st.session_state.student_id = None
+
+if not st.session_state.student_id:
+    st.title("📐 Doubt Clearing Assistant")
+    st.caption("Please enter your name or roll number so your teacher can see your progress.")
+    name_input = st.text_input("Your name or roll number:")
+    if st.button("Continue"):
+        cleaned = name_input.strip()
+        if cleaned:
+            st.session_state.student_id = cleaned
+            st.rerun()
+        else:
+            st.error("Please enter a name or roll number.")
+    st.stop()
+
 st.title("📐 Doubt Clearing Assistant")
 st.caption("Ask a question, and follow-up as much as you like — the assistant remembers the conversation.")
 
@@ -317,6 +341,11 @@ kb, embeddings_matrix, courses = load_knowledge_base()
 cache = get_cache()
 
 with st.sidebar:
+    st.caption(f"👤 {st.session_state.student_id}")
+    if st.button("Not you? Change name"):
+        st.session_state.student_id = None
+        st.rerun()
+
     st.markdown("**Course**")
     selected_course = st.selectbox("Course", courses, label_visibility="collapsed")
 
@@ -437,7 +466,11 @@ if question:
                 # logging apni alag try/except mein hai — fail ho to bhi
                 # answer zaroor dikhega, sirf ek chhota warning log hoga.
                 try:
-                    log_question(question, selected_course, chunks, answer, verified, repeated, cached_hit is not None)
+                    log_question(
+                        question, selected_course, chunks, answer, verified, repeated,
+                        cached_hit is not None, st.session_state.student_id,
+                    )
+                    
                 except Exception:
                     logger.exception(f"log_question failed (answer still shown): course={selected_course!r}, question={question!r}")
 
