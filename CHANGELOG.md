@@ -139,7 +139,7 @@ relying on it.
 - ⚠️ Live AgentRouter/fallback call — NAHI test hua (same wajah). Deploy
   se pehle `python3 verify_fallback_provider.py` khud chalayein.
 
-  ## Next-phase build — Section 1: schema migration (Aug 2026)
+## Next-phase build — Section 1: schema migration (Aug 2026)
 
 **5. `question_log` mein 3 naye columns (`student_id`, `used_full_reveal`,
 `mode`) add — per-student identity, scaffolding-engagement tracking, aur
@@ -167,6 +167,7 @@ ya purana data khoye. Poora suite: `pytest tests/` — 95/95 pass.
 ke Turso ka "duplicate column" error-wording is sandbox ke SQLite
 wording se match karta hai (is sandbox mein live Turso test nahi ho
 saka — same restriction jo Bug pattern mein pehle bhi note hui hai).
+
 ## Next-phase build — Section 2: per-student identity capture (Aug 2026)
 
 **6. `app.py` mein lightweight, pseudonymous student-identity gate — PIN
@@ -201,6 +202,7 @@ hai, cross-device ya cross-day verified nahi — agar student kal alag
 naam type kare, system usse alag learner samjhega. Ye jaan-boojh kar
 hai (pseudonymous, no-auth design), lekin dashboard analysis karte
 waqt yaad rakhna.
+
 ## Bug fix — "Change name" ke baad purani chat reh jati thi (16 Aug 2026)
 
 **7. Mentor ne review mein catch kiya:** "Not you? Change name" button
@@ -319,3 +321,87 @@ clients-fail raises, LaTeX-escaping repair applies same way). Poori
 suite: 110/110 pass. `py_compile` + `pyflakes` clean. Synthetic test-
 image generation (matplotlib path) khud chala kar confirm kiya —
 valid PNG banta hai.
+
+**SPIKE RESULT — LIVE CONFIRMED (16 Aug 2026):** Sohaib ne
+`verify_image_input.py` ek real handwritten notes ki photo ke sath
+chalaya — real Gemini API call, is sandbox ke bahar. Result:
+structured JSON output multimodal image input ke sath reliably
+combine hua. Description genuinely specific/accurate thi (epsilon-N
+notation, convergent/divergent sequences, ek chhota graph — real page
+ka content, generic/hallucinated jawab nahi). **Spike band, khula
+sawaal band — build-order item 5 (diagnosis v0) is confidence ke sath
+build kiya ja sakta hai.**
+
+## Next-phase build — Item 5: mistake diagnosis v0 (Aug 2026)
+
+**10. "Check your final answer" — student ek EXISTING answered turn
+(grounding="adapted_by_ai", computation_result set) ke neeche apna
+final answer photograph karta hai, system usse compare karta hai
+already-computed correct result se. Design (a) jaisa plan doc mein
+tha — standalone cold-upload nahi.**
+
+`core.py`: `DiagnosisTranscription` (transcribed_answer,
+could_read_clearly) — deliberately NARROW schema, vision call sirf
+transcribe karta hai, khud diagnose/hint nahi karta. Alag
+`DIAGNOSIS_SYSTEM_INSTRUCTION` (SYSTEM_INSTRUCTION se bilkul separate)
+taake model "helpfully" solve karne ki koshish na kare, sirf jo likha
+hai wahi transcribe kare.
+
+**Comparison — koi naya function nahi likha:** `verify_computation()`
+already `diff = simplify(lhs - rhs)` karta hai — isi ko
+`verify_computation(student_transcribed, correct_result)` ke tor par
+call kiya, jo "kya dono equal hain" ke liye bhi utna hi sahi kaam
+karta hai jitna "expression == result" ke liye (khud verify kiya —
+constant-vs-constant, symbolic-vs-symbolic, alag forms, sab cases).
+
+**Mismatch guidance — research-backed decision:** naya hint AI se
+mangwane ke bajaye, us TURN ka pehle-se-mojood `hint`/`guiding_question`
+(Section 3) re-surface kiya. Wajah: mentor ki Aug 15 research find —
+sirf mistake identify karna perceived-helpfulness ko NEGATIVE affect
+karta hai, guidance ke saath pair karna POSITIVE. v0 ke paas beshak
+sirf final-answer context hai (poora kaam nahi dekha), isliye naya
+hint generate karwana kam-reliable hota — existing hint reuse karna
+zyada sound hai.
+
+**Real Streamlit bug pehle hi pakda gaya (ship se pehle, review mein
+nahi):** `st.file_uploader` poora script rerun hone ke bawajood SAME
+file object return karta rehta hai jab tak widget change na ho — is
+guard ke bina, koi bhi UNRELATED click app mein kahin bhi ek nayi
+(billed) diagnosis API call AUR ek duplicate DB log row bana deta,
+usi upload ke liye baar baar. Isi CLASS ka bug jo "Change name" mein
+tha (16 Aug). Fix: `session_helpers.is_new_diagnosis_upload()` —
+turn ke `diag_processed_file_id` se compare karta hai, tested.
+
+Naye modules (`session_helpers.py`/`image_helpers.py` jaisa pattern —
+Streamlit-independent, plain pytest se testable):
+- `image_helpers.py::resize_image_for_upload()` — student phone
+  photos (10+ MB tak) resize karta hai (max 1600px width, JPEG q80)
+  upload se pehle, cost/speed ke liye.
+- `session_helpers.py::is_new_diagnosis_upload()` — upar wala guard.
+
+`app.py`: `diagnose_answer()` (`generate_answer()` jaisa retry+timeout
+pattern, lekin FALLBACK provider NAHI use karta — jaan-boojh kar,
+AgentRouter image input support nahi karta), `show_diagnosis_check()`
+(poora UI flow — upload, resize, transcribe, compare, log, display),
+alag `DIAGNOSIS_RATE_LIMIT=4` (60s window) — diagnosis calls text Q&A
+se bhaari hain (multimodal tokens) AUR kabhi cache-hit nahi hote (har
+photo unique hai). `log_question()` wrapper mein naya `mode` param
+add kiya (`"question"` default — koi purana call-site nahi tuta).
+
+`requirements.txt`: `pillow==12.1.1` explicitly pin kiya — pehle sirf
+matplotlib ki transitive dependency thi, ab seedha import ho raha hai.
+
+Verified: `tests/test_image_helpers.py` (5 tests — resize/no-upscale/
+boundary/PNG-transparency/valid-JPEG-output, real PIL operations, koi
+mocking nahi), `tests/test_session_helpers.py::TestIsNewDiagnosisUpload`
+(4 tests — same-file-not-reprocessed sabse important), `tests/
+test_core.py::TestVerifyComputationForDiagnosisReuse` (6 tests — reuse
+pattern explicitly protect karte hain, khaaskar constant-vs-constant
+jo pehle kam exercise hota tha). Poori suite: 125/125 pass. `py_compile`
++ `pyflakes` clean on `app.py`, `core.py`, `image_helpers.py`,
+`session_helpers.py`.
+
+Scope note (jaan-boojh kar): dashboard.py mein diagnosis_v0 rows ko
+alag se dikhane wala koi UI nahi — raw data table mein `mode` column
+ke zariye visible hain, lekin dedicated view build-order item 6
+(per-student mastery dashboard) ka hissa hai, is turn ka nahi.

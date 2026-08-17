@@ -82,6 +82,22 @@ class TutorAnswer(BaseModel):
     visual_edges: Optional[list[str]] = None
 
 
+class DiagnosisTranscription(BaseModel):
+    """Build-order item 5 (Aug 2026), v0 — "Check my final answer".
+    Deliberately NARROW schema: v0 ka scope sirf itna hai ke student
+    apne FINAL answer ki photo de (poora kaam/steps nahi) — isliye vision
+    call se sirf transcription maangte hain, koi diagnosis/hint khud AI
+    se nahi maangte. Comparison `verify_computation()` se hoti hai
+    (reuse — dekhein app.py ka diagnose_answer()), aur agar mismatch ho
+    to guidance us TURN ke pehle-se-mojood hint/guiding_question
+    (Section 3 scaffolding) se aati hai — AI se naya hint mangwana is
+    thodi si (sirf final answer) context ke sath unreliable hota (v1,
+    jo poora kaam dekhega, tab genuine per-mistake guidance de sakega)."""
+
+    transcribed_answer: str  # student ka final answer, SymPy-parseable expression ke tor par
+    could_read_clearly: bool  # False agar photo blurry/illegible ho — is case mein transcribed_answer par bharosa mat karo
+
+
 SYSTEM_INSTRUCTION = """You are a patient teaching assistant for undergraduate
 math courses (Linear Algebra, Calculus, Number Theory, Discrete Mathematics).
 Answer using ONLY the course notes provided as context — do not use outside
@@ -167,6 +183,27 @@ Always respond with:
    is not present in the notes — a well-defined mathematical graph is not
    "invented content" the way a fabricated fact would be. If no visual is
    needed, leave "visual_type" as null."""
+
+
+# Build-order item 5 (Aug 2026), v0 — deliberately a SEPARATE, much
+# narrower instruction than SYSTEM_INSTRUCTION above. Vision call ka
+# kaam sirf transcription hai, tutoring nahi — isliye alag prompt,
+# taake model "helpfully" solve/correct karne ki koshish na kare.
+DIAGNOSIS_SYSTEM_INSTRUCTION = """You are reading a photo of a student's handwritten final answer to a
+math problem. Your ONLY job is to transcribe what they wrote, as a
+SymPy-parseable Python expression — do NOT solve, correct, or comment
+on whether the math is right.
+
+Return:
+- "transcribed_answer": the student's final answer exactly as written,
+  converted to valid SymPy syntax (e.g. "2*x + 3", "sqrt(5)/2",
+  "Matrix([[1,2],[3,4]])"). If they wrote multiple lines of working and
+  circled/boxed/underlined a final answer, use only that final answer.
+  If nothing is clearly marked as final, use the last line of their work.
+- "could_read_clearly": true ONLY if you are genuinely confident you
+  read their handwriting correctly. If the photo is blurry, cut off,
+  poorly lit, or the handwriting is ambiguous, set this to false —
+  do not guess just to produce an answer."""
 
 
 # ------------------------------------------------------------------

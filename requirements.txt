@@ -12,6 +12,13 @@ pydantic==2.13.4
 pandas==3.0.2
 sympy==1.14.0
 matplotlib==3.10.8
+# Build-order item 5 (Aug 2026): diagnosis-mode photo uploads ko resize
+# karne ke liye. Pehle sirf matplotlib ka TRANSITIVE dependency thi
+# (kabhi requirements.txt mein explicitly pin nahi hui) — ab hum ise
+# seedha import karte hain (app.py), isliye explicitly pin karna zaroori
+# hai. Warna agar matplotlib kabhi Pillow drop kar de ya version badle,
+# ye silently break ho sakta tha.
+pillow==12.1.1
 networkx==3.6.1
 requests==2.33.1
 

@@ -36,3 +36,22 @@ def reset_identity(session_state) -> None:
     """
     session_state["student_id"] = None
     session_state["messages"] = []
+
+
+def is_new_diagnosis_upload(turn, uploaded_file) -> bool:
+    """Build-order item 5 (Aug 2026), v0. `st.file_uploader` poora
+    Streamlit script rerun hone ke bawajood SAME file object return
+    karta rehta hai jab tak widget clear/change na ho — bina is check
+    ke, koi bhi UNRELATED click app mein kahin bhi ek nayi (billed)
+    diagnosis API call AUR ek duplicate DB log row bana deta, usi
+    upload ke liye baar baar (isi CLASS ka bug jo "Change name" mein
+    tha, dekhein reset_identity docstring aur CHANGELOG 16 Aug 2026).
+
+    `turn`: dict jisme is turn ka last-processed file id store hota hai
+    (`diag_processed_file_id` key). `uploaded_file`: Streamlit
+    UploadedFile jaisa koi bhi object jiska `.file_id` attribute ho
+    (ya test mein ek simple stand-in).
+    """
+    if uploaded_file is None:
+        return False
+    return turn.get("diag_processed_file_id") != uploaded_file.file_id

@@ -131,16 +131,14 @@ class GeminiGenerationBackend(GenerationBackend):
           kare (max ~1600px width, jpeg quality ~80) — yahan bas jo
           bytes diye jayein wahi bhejta hai.
 
-        >>> SPIKE NOTE: response_format (structured JSON output)
-        >>> multimodal input ke sath reliably combine hone ka explicit
-        >>> confirmation current Gemini docs mein nahi mila — dono
-        >>> cheezein docs ke ALAG examples mein hain, saath kahin nahi
-        >>> dikhayi gayin. Isliye ye method abhi "spike" hai — mocked
-        >>> tests se sirf REQUEST SHAPE verify hoti hai, ke hum sahi
-        >>> format bhej rahe hain. Ye asal mein reliably kaam karta hai
-        >>> ya nahi, ye khud verify karein (dekhein verify_image_input.py)
-        >>> is sandbox mein koi Google domain allowed nahi hai, isliye
-        >>> live test nahi ho saka."""
+        >>> SPIKE RESULT (confirmed 16 Aug 2026, live test by Sohaib):
+        >>> response_format (structured JSON output) DOES combine
+        >>> reliably with multimodal input — a real handwritten-notes
+        >>> photo was sent, and the model returned accurate structured
+        >>> JSON (description matched real page content: epsilon-N
+        >>> notation, convergent/divergent sequences — not a generic/
+        >>> hallucinated answer). Spike closed; safe to build build-order
+        >>> item 5 (diagnosis v0) on top of this. See CHANGELOG.md."""
         image_b64 = base64.b64encode(image_bytes).decode("utf-8")
         last_error = None
         for client in self._clients:

@@ -37,9 +37,11 @@ from sympy.parsing.sympy_parser import parse_expr
 from auth_guard import AttemptState, is_locked_out, record_attempt, seconds_remaining
 from cache_store import QACache
 from core import (
+    DIAGNOSIS_SYSTEM_INSTRUCTION,
     EMBEDDING_TIMEOUT_SECONDS,
     FALLBACK_THRESHOLD,
     SYSTEM_INSTRUCTION,
+    DiagnosisTranscription,
     TutorAnswer,
     build_generation_prompt,
     check_repeated_confusion,
@@ -51,10 +53,11 @@ from core import (
 from db_connection import get_connection
 from embedding_backend import get_backend as get_embedding_backend_impl
 from generation_backend import get_generation_backend
+from image_helpers import resize_image_for_upload
 from knowledge_base_loader import load_knowledge_base
 from logging_setup import get_logger
 from question_log_store import QuestionLogStore
-from session_helpers import reset_identity
+from session_helpers import is_new_diagnosis_upload, reset_identity
 
 try:
     # Streamlit Cloud pe deploy hone par yahan se milega (Secrets settings mein set karna hai)
@@ -211,10 +214,47 @@ def generate_answer(question, chunks, history):
         raise primary_error  # student ko wahi (primary) error dikhega, consistent messaging ke liye
 
 
+def diagnose_answer(image_bytes, mime_type):
+    """Build-order item 5 (Aug 2026), v0 — "Check my final answer".
+    `generate_answer()` jaisa hi retry+timeout pattern, lekin FALLBACK
+    provider NAHI use karta (jaan-boojh kar — dekhein
+    generation_backend.py ka generate_from_image() docstring aur plan
+    doc Section 5): AgentRouter jaisi gateway image input support nahi
+    karti. Primary Gemini fail ho to seedha error upar propagate hoti
+    hai — caller clear "abhi unavailable" message dikhata hai, poora
+    system down nahi hota."""
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+
+    primary = get_primary_generation_backend()
+
+    def _call():
+        return primary.generate_from_image(
+            DIAGNOSIS_SYSTEM_INSTRUCTION,
+            "What is the student's final answer in this photo?",
+            image_bytes, mime_type, DiagnosisTranscription,
+        )
+
+    last_error = None
+    for attempt in range(2):
+        executor = ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(_call)
+        try:
+            return future.result(timeout=35)
+        except FutureTimeoutError:
+            last_error = TimeoutError("Diagnosis image call timed out")
+        except Exception as e:  # noqa: BLE001
+            last_error = e
+        finally:
+            executor.shutdown(wait=False)
+        if attempt == 0:
+            time.sleep(2)
+    raise last_error
+
+
 # ------------------------------------------------------------------
 # Logging (question activity — teacher dashboard ke liye)
 # ------------------------------------------------------------------
-def log_question(question, course, chunks, answer, verified, repeated, cached, student_id, used_full_reveal):
+def log_question(question, course, chunks, answer, verified, repeated, cached, student_id, used_full_reveal, mode="question"):
     # FIX (bug jo student ne report kiya): pehle CSV file mein likha jata
     # tha, jo alag-deployed teacher dashboard app ko kabhi nazar nahi
     # aati thi. Ab shared connection (local ya Turso) mein likhte hain —
@@ -233,6 +273,7 @@ def log_question(question, course, chunks, answer, verified, repeated, cached, s
         from_cache=cached,
         student_id=student_id,
         used_full_reveal=used_full_reveal,
+        mode=mode,
     )
 
 
@@ -312,6 +353,106 @@ def show_answer(turn, lang_pref, key, always_full=False):
             st.latex(f"\\text{{Final answer: }} {sympy.latex(parse_expr(answer.computation_result))}")
         except Exception:
             st.code(f"Final answer: {answer.computation_result}")
+
+
+# Build-order item 5 (Aug 2026), v0 — separate, tighter rate limit than
+# QUESTION_RATE_LIMIT (plan doc Section 5): diagnosis calls are heavier
+# (multimodal tokens) AND never cache-hit (every photo is unique), so
+# one session could burn through shared quota faster than text Q&A.
+DIAGNOSIS_RATE_LIMIT = 4
+DIAGNOSIS_RATE_WINDOW_SECONDS = 60
+
+
+def show_diagnosis_check(turn, key, course):
+    """Build-order item 5 (Aug 2026), v0 — "Check my final answer".
+    Sirf un turns ke neeche dikhta hai jinka grounding "adapted_by_ai"
+    hai AUR computation_result set hai — design (a) (plan doc Section
+    3): is EXISTING turn ke already-computed computation_result se
+    compare karta hai, standalone cold-upload nahi (naya retrieval
+    nahi karna padta, matched_chapter/matched_section bhi reuse hote
+    hain logging ke liye).
+    """
+    answer = turn["answer"]
+    if answer.grounding != "adapted_by_ai" or not answer.computation_result:
+        return
+
+    with st.expander("📷 Check your final answer"):
+        uploaded = st.file_uploader(
+            "Upload a photo of just your final answer (not your full working)",
+            type=["jpg", "jpeg", "png"], key=f"diag_upload_{key}",
+        )
+
+        # FIX-BEFORE-SHIP (same class of bug as "Change name", 16 Aug
+        # 2026): st.file_uploader keeps returning the SAME file object
+        # across EVERY Streamlit rerun until the widget is cleared/
+        # changed — without this guard, any unrelated click ANYWHERE in
+        # the app would re-trigger a fresh (billed) diagnosis API call
+        # AND a duplicate DB log row for the exact same upload. Dekhein
+        # session_helpers.is_new_diagnosis_upload docstring — tested,
+        # ye check inline nahi ho raha.
+        if is_new_diagnosis_upload(turn, uploaded):
+            now = time.time()
+            recent = st.session_state.setdefault("_diagnosis_timestamps", [])
+            recent[:] = [t for t in recent if now - t < DIAGNOSIS_RATE_WINDOW_SECONDS]
+
+            if len(recent) >= DIAGNOSIS_RATE_LIMIT:
+                turn["diag_result"] = {"rate_limited": True}
+            else:
+                recent.append(now)
+                with st.spinner("Reading your answer..."):
+                    try:
+                        image_bytes, mime_type = resize_image_for_upload(uploaded)
+                        transcription = diagnose_answer(image_bytes, mime_type)
+                    except Exception:
+                        logger.exception("diagnose_answer failed (student sees a generic unavailable message)")
+                        turn["diag_result"] = {"error": True}
+                    else:
+                        if not transcription.could_read_clearly:
+                            turn["diag_result"] = {"unclear": True}
+                            matches = None
+                        else:
+                            matches = verify_computation(transcription.transcribed_answer, answer.computation_result)
+                            turn["diag_result"] = {"transcribed": transcription.transcribed_answer, "matches": matches}
+                        try:
+                            log_question(
+                                f"[Answer check] {turn['question']}", course, turn["chunks"], answer,
+                                verified=matches, repeated=False, cached=False,
+                                student_id=st.session_state.student_id, used_full_reveal=None,
+                                mode="diagnosis_v0",
+                            )
+                        except Exception:
+                            logger.exception("log_question (diagnosis_v0) failed (result still shown to student)")
+
+            turn["diag_processed_file_id"] = uploaded.file_id
+            st.rerun()
+
+        result = turn.get("diag_result")
+        if not result:
+            return
+        if result.get("rate_limited"):
+            st.warning("Thoda ruk kar dobara try karein — ek dam mein bohat zyada answer-checks ho gaye hain.")
+        elif result.get("error"):
+            st.error("Couldn't check your answer right now — please try again in a moment.")
+        elif result.get("unclear"):
+            st.warning("Couldn't read the photo clearly — try a clearer, well-lit photo of just your final answer.")
+        elif result["matches"] is True:
+            st.success(f"✅ Matches! We read your answer as: {result['transcribed']}")
+        elif result["matches"] is False:
+            st.warning(f"We read your answer as **{result['transcribed']}** — that doesn't match.")
+            # Naya hint AI se mangwane ke bajaye, is TURN ka pehle-se-
+            # mojood hint/guiding_question (Section 3) re-surface karte
+            # hain — research-backed (plan doc Section 10.2): sirf
+            # "galat hai" batana perceived-helpfulness ko negative
+            # affect karta hai, guidance ke saath pair karna positive.
+            if answer.hint or answer.guiding_question:
+                if answer.hint:
+                    st.info(f"💡 {answer.hint}")
+                if answer.guiding_question:
+                    st.caption(f"🤔 {answer.guiding_question}")
+            else:
+                st.caption("Try reworking this problem, or ask a new question here if you'd like to see the full solution again.")
+        else:  # None — SymPy transcribed_answer ko parse nahi kar saka
+            st.info(f"We read your answer as **{result['transcribed']}** but couldn't automatically verify it — double check manually or ask your teacher.")
 
 
 # ------------------------------------------------------------------
@@ -413,6 +554,7 @@ for i, turn in enumerate(st.session_state.messages):
             with st.expander("Sources used from notes"):
                 for c in turn["chunks"]:
                     st.markdown(f"- **{c['title']}** — *{c['chapter']}, {c['section']}*")
+        show_diagnosis_check(turn, key=f"diag_{i}", course=selected_course)
 
 question = st.chat_input("Type your question here...")
 
@@ -541,6 +683,7 @@ if question:
                     with st.expander("Sources used from notes"):
                         for c in chunks:
                             st.markdown(f"- **{c['title']}** — *{c['chapter']}, {c['section']}*")
+                show_diagnosis_check(turn, key=reveal_key.replace("reveal_", "diag_"), course=selected_course)
             except Exception:
                 # FIX (bug jo review mein mila tha): pehle yahan exception
                 # silently gum ho jati thi — koi log, koi traceback nahi. Ab

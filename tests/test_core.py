@@ -297,3 +297,42 @@ class TestTutorAnswerScaffoldingBackwardCompat:
         )
         assert answer.hint == "Think about the power rule."
         assert answer.guiding_question is not None
+        
+class TestVerifyComputationForDiagnosisReuse:
+    """Build-order item 5 (Aug 2026), v0 — "Check my final answer".
+    Diagnosis mode compare karta hai student ke transcribed_answer ko
+    original turn ke computation_result se — dono "final results" hain
+    (expression-vs-result nahi). verify_computation(A, B) ise `A - B == 0`
+    ke tor par treat karta hai (dekhein core.py docstring), jo isi reuse
+    ke liye kaam karta hai bina koi naya comparison function likhe. Ye
+    tests is reuse-pattern ko explicitly protect karte hain — khaaskar
+    CONSTANT-vs-CONSTANT case (student final answer aksar ek number
+    hota hai, koi free variable nahi), jo TestVerifyComputationDomainBug
+    ke expression-based tests kam exercise karte hain."""
+
+    def test_matching_constants_different_forms(self):
+        # Student ne "2" likha, correct answer "sqrt(4)" ke tor par
+        # stored hai — dono same value, alag form
+        assert verify_computation("2", "sqrt(4)") is True
+
+    def test_matching_plain_constants(self):
+        assert verify_computation("42", "42") is True
+
+    def test_mismatched_constants(self):
+        assert verify_computation("41", "42") is False
+
+    def test_matching_symbolic_answers_different_forms(self):
+        # Student ne "2*x" likha, correct answer bhi effectively wahi
+        # hai lekin alag likha gaya
+        assert verify_computation("2*x", "2*x") is True
+        assert verify_computation("(x+1)**2 - 1", "x**2 + 2*x") is True
+
+    def test_mismatched_symbolic_answers(self):
+        assert verify_computation("2*x", "3*x") is False
+
+    def test_unreadable_transcription_returns_none_not_a_crash(self):
+        # DiagnosisTranscription.could_read_clearly=False cases ko
+        # app.py alag se guard karta hai, lekin agar kabhi garbage
+        # transcribed_answer yahan tak pahunch bhi jaye, crash nahi
+        # honi chahiye — inconclusive (None) milna chahiye
+        assert verify_computation("not valid math @#$", "42") is None
