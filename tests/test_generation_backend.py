@@ -11,6 +11,7 @@ sahi shape mein ban rahi hai aur response sahi parse ho rahi hai.
 >>> saath khud ek live smoke-test zaroor chalayein.
 """
 
+import base64
 import json
 from unittest.mock import MagicMock, patch
 
@@ -49,6 +50,108 @@ class TestGeminiGenerationBackend:
         assert kwargs["response_format"][0]["mime_type"] == "application/json"
         assert "schema" in kwargs["response_format"][0]
         assert kwargs["response_format"][0]["schema"] == DummySchema.model_json_schema()
+
+
+class TestGeminiGenerationBackendImageInput:
+    """Build-order item 4 (Aug 2026) — image-input spike. Ye tests sirf
+    REQUEST SHAPE verify karte hain (hum Gemini Interactions API ka
+    documented, current contract sahi bana rahe hain) — asal live call
+    ye sandbox mein nahi ho sakti (koi Google domain allowed nahi),
+    isliye deploy se pehle verify_image_input.py khud chalayein."""
+
+    def test_input_is_a_list_with_text_and_image_parts(self):
+        client = MagicMock()
+        fake_interaction = MagicMock()
+        fake_interaction.output_text = json.dumps({"english": "hi", "grounding": "direct_from_notes"})
+        client.interactions.create.return_value = fake_interaction
+
+        backend = GeminiGenerationBackend(client=client, model="gemini-3.6-flash")
+        result = backend.generate_from_image(
+            "system", "What mistake did I make?", b"fake-jpeg-bytes", "image/jpeg", DummySchema,
+        )
+
+        assert result.english == "hi"
+        _, kwargs = client.interactions.create.call_args
+        input_parts = kwargs["input"]
+        assert isinstance(input_parts, list)
+        assert len(input_parts) == 2
+
+        text_part, image_part = input_parts
+        assert text_part == {"type": "text", "text": "What mistake did I make?"}
+        assert image_part["type"] == "image"
+        assert image_part["mime_type"] == "image/jpeg"
+
+    def test_image_bytes_are_base64_encoded_not_raw(self):
+        client = MagicMock()
+        fake_interaction = MagicMock()
+        fake_interaction.output_text = json.dumps({"english": "hi", "grounding": "direct_from_notes"})
+        client.interactions.create.return_value = fake_interaction
+
+        backend = GeminiGenerationBackend(client=client, model="gemini-3.6-flash")
+        raw_bytes = b"\x89PNG\r\n\x1a\n\x00\x00fake-binary-image-data"
+        backend.generate_from_image("system", "prompt", raw_bytes, "image/png", DummySchema)
+
+        _, kwargs = client.interactions.create.call_args
+        sent_data = kwargs["input"][1]["data"]
+        # Raw binary JSON-safe nahi hota — base64 string honi chahiye,
+        # aur decode karke wapas ORIGINAL bytes milne chahiyein
+        assert isinstance(sent_data, str)
+        assert base64.b64decode(sent_data) == raw_bytes
+
+    def test_uses_same_response_format_shape_as_text_generate(self):
+        client = MagicMock()
+        fake_interaction = MagicMock()
+        fake_interaction.output_text = json.dumps({"english": "hi", "grounding": "direct_from_notes"})
+        client.interactions.create.return_value = fake_interaction
+
+        backend = GeminiGenerationBackend(client=client, model="gemini-3.6-flash")
+        backend.generate_from_image("system", "prompt", b"bytes", "image/jpeg", DummySchema)
+
+        _, kwargs = client.interactions.create.call_args
+        assert kwargs["response_format"][0]["schema"] == DummySchema.model_json_schema()
+
+    def test_rotates_to_next_client_on_failure(self):
+        # generate() jaisa hi client-rotation behavior — dekhein
+        # TestGeminiGenerationBackend, isi pattern ko yahan bhi honi chahiye
+        failing_client = MagicMock()
+        failing_client.interactions.create.side_effect = Exception("quota exceeded")
+
+        working_client = MagicMock()
+        fake_interaction = MagicMock()
+        fake_interaction.output_text = json.dumps({"english": "hi", "grounding": "direct_from_notes"})
+        working_client.interactions.create.return_value = fake_interaction
+
+        backend = GeminiGenerationBackend(clients=[failing_client, working_client], model="gemini-3.6-flash")
+        result = backend.generate_from_image("system", "prompt", b"bytes", "image/jpeg", DummySchema)
+
+        assert result.english == "hi"
+        assert failing_client.interactions.create.called
+        assert working_client.interactions.create.called
+
+    def test_raises_last_error_when_all_clients_fail(self):
+        failing_client = MagicMock()
+        failing_client.interactions.create.side_effect = Exception("all quota exceeded")
+
+        backend = GeminiGenerationBackend(clients=[failing_client], model="gemini-3.6-flash")
+        with pytest.raises(Exception, match="all quota exceeded"):
+            backend.generate_from_image("system", "prompt", b"bytes", "image/jpeg", DummySchema)
+
+    def test_latex_escaping_repair_applies_same_as_text_generate(self):
+        # repair_json_escaping() (Gemini ka LaTeX-backslash bug fix) ab
+        # _parse_response() se dono generate() aur generate_from_image()
+        # ko milta hai — isse regression na ho isliye explicitly test
+        client = MagicMock()
+        fake_interaction = MagicMock()
+        # Ek single-backslash \times (broken JSON escaping) jaisa Gemini
+        # kabhi bhejta hai — repair_json_escaping() ise fix karta hai
+        fake_interaction.output_text = (
+            '{"english": "$2 \\times 3$", "grounding": "direct_from_notes"}'
+        )
+        client.interactions.create.return_value = fake_interaction
+
+        backend = GeminiGenerationBackend(client=client, model="gemini-3.6-flash")
+        result = backend.generate_from_image("system", "prompt", b"bytes", "image/jpeg", DummySchema)
+        assert "times" in result.english
 
 
 class TestStripMarkdownFences:

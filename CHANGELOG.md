@@ -278,3 +278,44 @@ hone dena hai — abhi gradually-replace default rakha hai (koi cache
 invalidation code nahi likha), kyunke backward-compat fallback already
 graceful hai. Agar zyada tezi se sab answers scaffold-wale chahiye hon,
 cache clear karna ek explicit, chhota alag step hoga.
+
+## Next-phase build — Item 4: image-input capability spike (Aug 2026)
+
+**9. `GeminiGenerationBackend.generate_from_image()` — mistake-diagnosis
+mode (build-order item 5, "Check my work") ka shared prerequisite,
+dono v0 aur v1 ke liye (plan doc mein correction: v0 bhi isse chahiye,
+sirf v1 nahi, jaisa mentor ke original build-order mein tha).**
+`generation_backend.py`: `generate()` se `_parse_response()` (LaTeX-
+escaping repair + schema parsing) aur `_response_format()` (schema-
+wrapping) nikaal kar shared helpers bana diye — `generate_from_image()`
+inhe reuse karta hai, koi duplicate logic nahi. Naya method sirf
+`GeminiGenerationBackend` par hai, base `GenerationBackend` abstract
+class ka hissa NAHI — jaan-boojh kar: `OpenAICompatibleGenerationBackend`
+(fallback provider) image input support nahi karta, aur diagnosis mode
+ise use hi nahi karega (agar primary Gemini fail ho, clear "abhi
+unavailable" message dega, poora system down nahi hoga — plan doc
+Section 5).
+Technical shape (current, verified Aug 2026 Gemini Interactions API
+docs se): inline base64 image data (Files API upload NAHI — student
+phone-photo jaisi chhoti, ek-baar-use hone wali image ke liye overkill
+hai), `input` ek list `[{"type": "text", "text": ...}, {"type": "image",
+"data": <base64>, "mime_type": ...}]`.
+Genuinely khula sawaal (docs ne explicitly confirm nahi kiya):
+structured JSON output (`response_format`) multimodal input ke saath
+reliably combine hota hai ya nahi — dono cheezein docs ke ALAG examples
+mein hain, saath kabhi nahi dikhayi gayin. Isliye ye abhi "SPIKE" hai.
+Naya manual smoke-test script: `verify_image_input.py` (existing
+`verify_turso_connection.py`/`verify_fallback_provider.py` convention
+follow karta hai) — koi image path na diya jaye to khud ek chhoti
+synthetic test-image (matplotlib se "2 + 2 = 4") bana leta hai, ya
+apni asli photo se test kiya ja sakta hai. Deploy/build-order item 5
+se PEHLE ye khud chalayein — is sandbox mein koi Google/Gemini domain
+allowed nahi tha, isliye live confirm NAHI ho saka.
+Verified: `tests/test_generation_backend.py::
+TestGeminiGenerationBackendImageInput` — 6 naye tests (request shape,
+base64 encoding round-trips to original bytes, response_format shape
+match, client-rotation-on-failure same as text `generate()`, all-
+clients-fail raises, LaTeX-escaping repair applies same way). Poori
+suite: 110/110 pass. `py_compile` + `pyflakes` clean. Synthetic test-
+image generation (matplotlib path) khud chala kar confirm kiya —
+valid PNG banta hai.

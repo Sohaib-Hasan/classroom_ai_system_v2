@@ -32,6 +32,7 @@ IMPORTANT — AgentRouter (ya koi bhi third-party "gateway") ke baare mein:
 from __future__ import annotations
 
 import abc
+import base64
 import json
 import re
 import time
@@ -95,24 +96,88 @@ class GeminiGenerationBackend(GenerationBackend):
                     # FIX: Gemini docs ke mutabiq response_format ek list honi
                     # chahiye jismein {"type","mime_type","schema"} keys hon —
                     # pehle raw schema seedha pass ho rahi thi.
-                    response_format=[
-                        {
-                            "type": "text",
-                            "mime_type": "application/json",
-                            "schema": response_schema.model_json_schema(),
-                        }
-                    ],
+                    response_format=self._response_format(response_schema),
                 )
-                # FIX (production bug, Aug 2026): Gemini kabhi LaTeX commands
-                # (\times, \buildrel, waghera) mein backslash double-escape
-                # karna bhool jata hai — is se jawab corrupt ho jata hai (kabhi
-                # silently, kabhi crash ke saath). Parse karne se pehle repair
-                # karte hain — dekhein core.repair_json_escaping().
-                repaired_text = repair_json_escaping(interaction.output_text)
-                return response_schema.model_validate_json(repaired_text)
+                return self._parse_response(interaction, response_schema)
             except Exception as e:  # noqa: BLE001 — agli client try karni hai
                 last_error = e
         raise last_error
+
+    def generate_from_image(
+        self, system_instruction: str, prompt: str, image_bytes: bytes,
+        mime_type: str, response_schema: Type[T],
+    ) -> T:
+        """Build-order item 4 (Aug 2026) — image-input capability SPIKE.
+        `generate()` jaisa hi hai (same client-rotation, same response
+        parsing), bas `input` ab text + image dono wala list hai.
+
+        Design decisions (dekhein plan doc Section 5):
+        - Inline base64 image data, Files API upload NAHI — student
+          phone-photo jaisi chhoti, ek-baar-use hone wali image ke liye
+          Files API overkill hai (extra roundtrip, file-lifecycle
+          manage karna). Format Gemini Interactions API ke current
+          (verified Aug 2026) docs ke mutabiq: {"type": "image",
+          "data": <base64 str>, "mime_type": ...}.
+        - Ye method sirf GeminiGenerationBackend par hai, base
+          GenerationBackend abstract class ka hissa NAHI —
+          OpenAICompatibleGenerationBackend (fallback provider) image
+          input support nahi karta, aur ye jaan-boojh kar scope ke
+          bahar rakha hai (dekhein plan doc: diagnosis mode fallback
+          provider use hi nahi karega, primary Gemini fail ho to clear
+          "abhi unavailable hai" message dikhayega, poora system down
+          nahi hoga).
+        - Resize/compress karna is method ka kaam NAHI hai — caller
+          (jab diagnosis-mode UI banega) upload se pehle image compress
+          kare (max ~1600px width, jpeg quality ~80) — yahan bas jo
+          bytes diye jayein wahi bhejta hai.
+
+        >>> SPIKE NOTE: response_format (structured JSON output)
+        >>> multimodal input ke sath reliably combine hone ka explicit
+        >>> confirmation current Gemini docs mein nahi mila — dono
+        >>> cheezein docs ke ALAG examples mein hain, saath kahin nahi
+        >>> dikhayi gayin. Isliye ye method abhi "spike" hai — mocked
+        >>> tests se sirf REQUEST SHAPE verify hoti hai, ke hum sahi
+        >>> format bhej rahe hain. Ye asal mein reliably kaam karta hai
+        >>> ya nahi, ye khud verify karein (dekhein verify_image_input.py)
+        >>> is sandbox mein koi Google domain allowed nahi hai, isliye
+        >>> live test nahi ho saka."""
+        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        last_error = None
+        for client in self._clients:
+            try:
+                interaction = client.interactions.create(
+                    model=self._model,
+                    system_instruction=system_instruction,
+                    input=[
+                        {"type": "text", "text": prompt},
+                        {"type": "image", "data": image_b64, "mime_type": mime_type},
+                    ],
+                    response_format=self._response_format(response_schema),
+                )
+                return self._parse_response(interaction, response_schema)
+            except Exception as e:  # noqa: BLE001
+                last_error = e
+        raise last_error
+
+    @staticmethod
+    def _response_format(response_schema: Type[T]):
+        return [
+            {
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": response_schema.model_json_schema(),
+            }
+        ]
+
+    @staticmethod
+    def _parse_response(interaction, response_schema: Type[T]) -> T:
+        # FIX (production bug, Aug 2026): Gemini kabhi LaTeX commands
+        # (\times, \buildrel, waghera) mein backslash double-escape
+        # karna bhool jata hai — is se jawab corrupt ho jata hai (kabhi
+        # silently, kabhi crash ke saath). Parse karne se pehle repair
+        # karte hain — dekhein core.repair_json_escaping().
+        repaired_text = repair_json_escaping(interaction.output_text)
+        return response_schema.model_validate_json(repaired_text)
 
 
 class OpenAICompatibleGenerationBackend(GenerationBackend):
