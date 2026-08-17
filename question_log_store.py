@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS question_log (
     from_cache INTEGER,
     student_id TEXT,
     used_full_reveal INTEGER,
-    mode TEXT
+    mode TEXT,
+    had_scaffold INTEGER
 );
 """
 
@@ -47,16 +48,26 @@ CREATE TABLE IF NOT EXISTS question_log (
 # deployed apps share karte hain) par ye migration land karo aur khud
 # verify karo koi crash nahi hua, PHIR (Phase 2/3) feature-UI layer karo
 # jo inhe actually bharay. Isse blast-radius chhota rehta hai.
+#
+# had_scaffold (build-order item 6, Aug 2026): app.py Section 3 mein
+# `used_full_reveal = (always_full or not has_scaffold)` compute karta
+# hai — matlab agar koi scaffold hi available nahi tha (not_found rows,
+# ya purani cache jisme hint field hi nahi thi), used_full_reveal FORCE
+# True ho jata hai, chahe student ne kuch skip na kiya ho. Dashboard ka
+# engagement-metric (item 6) is ambiguity ko accurately measure nahi kar
+# sakta tha — is column se ab clearly pata chalta hai ke scaffold KABHI
+# available tha bhi ya nahi.
 _MIGRATIONS = [
     "ALTER TABLE question_log ADD COLUMN student_id TEXT",
     "ALTER TABLE question_log ADD COLUMN used_full_reveal INTEGER",
     "ALTER TABLE question_log ADD COLUMN mode TEXT",
+    "ALTER TABLE question_log ADD COLUMN had_scaffold INTEGER",
 ]
 
 COLUMNS = [
     "timestamp", "course", "question", "matched_chapter", "matched_section",
     "similarity", "grounding", "verified", "repeated_confusion", "from_cache",
-    "student_id", "used_full_reveal", "mode",
+    "student_id", "used_full_reveal", "mode", "had_scaffold",
 ]
 
 
@@ -98,7 +109,7 @@ class QuestionLogStore:
 
     def log_question(self, timestamp, course, question, matched_chapter, matched_section,
                       similarity, grounding, verified, repeated_confusion, from_cache,
-                      student_id=None, used_full_reveal=None, mode="question"):
+                      student_id=None, used_full_reveal=None, mode="question", had_scaffold=None):
         """Return karta hai naye row ka id (SQLite ya Turso dono se
         `.lastrowid` milta hai — dekhein db_connection.py). Scaffolding
         feature (build-order item 3) isse `mark_revealed()` ke liye
@@ -110,8 +121,8 @@ class QuestionLogStore:
                 "INSERT INTO question_log "
                 "(timestamp, course, question, matched_chapter, matched_section, "
                 "similarity, grounding, verified, repeated_confusion, from_cache, "
-                "student_id, used_full_reveal, mode) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "student_id, used_full_reveal, mode, had_scaffold) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     timestamp, course, question, matched_chapter, matched_section,
                     similarity, grounding,
@@ -121,6 +132,7 @@ class QuestionLogStore:
                     student_id,
                     None if used_full_reveal is None else int(bool(used_full_reveal)),
                     mode,
+                    None if had_scaffold is None else int(bool(had_scaffold)),
                 ),
             )
             self._conn.commit()

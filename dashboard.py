@@ -100,15 +100,34 @@ selected = st.selectbox("Course", course_options)
 if selected != "All courses":
     df = df[df["course"] == selected]
 
+# ------------------------------------------------------------------
+# Mode-aware split (build-order item 6, Aug 2026)
+# ------------------------------------------------------------------
+# FIX (latent bug, caught before it corrupted data): "verified" (aur
+# similarity/matched_section/from_cache/repeated_confusion) mean
+# DIFFERENT things depending on mode. diagnosis_v0 rows REUSE these
+# fields from the original turn (by design, item 5) — "verified" for
+# diagnosis_v0 means "did the student's photographed answer match,"
+# NOT "did the AI verify its own computation." Sections below (topic
+# heatmap, time trend, gap alert, grounding %, cache/repeat rates)
+# were all filtering by `grounding`/other fields, NOT `mode` — meaning
+# diagnosis_v0 rows would silently mix into a combined "verification %"
+# and double-count topics, exactly as flagged in review. Old rows
+# (before this column existed) get treated as "question" mode — they
+# predate diagnosis mode entirely.
+df["mode"] = df["mode"].fillna("question")
+question_df = df[df["mode"] == "question"].copy()
+diagnosis_df = df[df["mode"] == "diagnosis_v0"].copy()
+
 st.divider()
 
 # ------------------------------------------------------------------
 # Overall stats
 # ------------------------------------------------------------------
 col1, col2, col3 = st.columns(3)
-col1.metric("Total questions", len(df))
-col2.metric("Active days", df["date"].nunique())
-col3.metric("Busiest day", str(df["date"].value_counts().idxmax()) if len(df) else "-")
+col1.metric("Total questions", len(question_df))
+col2.metric("Active days", question_df["date"].nunique())
+col3.metric("Busiest day", str(question_df["date"].value_counts().idxmax()) if len(question_df) else "-")
 
 st.divider()
 
@@ -116,7 +135,7 @@ st.divider()
 # 1. Topic heatmap
 # ------------------------------------------------------------------
 st.subheader("Most asked-about topics")
-topic_counts = df["matched_section"].value_counts().head(10)
+topic_counts = question_df["matched_section"].value_counts().head(10)
 st.bar_chart(topic_counts)
 st.caption("Shows which section generates the most doubts — a good place to focus your next lecture or revision session.")
 
@@ -126,7 +145,7 @@ st.divider()
 # 2. Time trend
 # ------------------------------------------------------------------
 st.subheader("Questions per day")
-daily_counts = df.groupby("date").size()
+daily_counts = question_df.groupby("date").size()
 st.line_chart(daily_counts)
 st.caption("A spike before an exam is a good signal it's time for a revision session.")
 
@@ -136,7 +155,7 @@ st.divider()
 # 3. Gap alert
 # ------------------------------------------------------------------
 st.subheader("Possible gaps in the notes")
-weak = df[df["similarity"] < WEAK_MATCH_THRESHOLD].sort_values("timestamp", ascending=False)
+weak = question_df[question_df["similarity"] < WEAK_MATCH_THRESHOLD].sort_values("timestamp", ascending=False)
 if len(weak) == 0:
     st.success("No weak-match questions found — the notes are covering things well.")
 else:
@@ -153,8 +172,8 @@ st.divider()
 # 4. Grounding + verification transparency
 # ------------------------------------------------------------------
 st.subheader("Answer grounding & verification")
-adapted = df[df["grounding"] == "adapted_by_ai"]
-adapted_pct = (len(adapted) / len(df) * 100) if len(df) else 0
+adapted = question_df[question_df["grounding"] == "adapted_by_ai"]
+adapted_pct = (len(adapted) / len(question_df) * 100) if len(question_df) else 0
 
 col_a, col_b = st.columns(2)
 col_a.metric("Directly from notes", f"{100 - adapted_pct:.0f}%")
@@ -189,15 +208,90 @@ st.divider()
 # ------------------------------------------------------------------
 st.subheader("Efficiency & confusion signals")
 col_f, col_g = st.columns(2)
-cache_pct = (df["from_cache"].astype(int) == 1).mean() * 100
+cache_pct = (question_df["from_cache"].astype(int) == 1).mean() * 100 if len(question_df) else 0
 col_f.metric("Answered from cache", f"{cache_pct:.0f}%")
-repeat_pct = (df["repeated_confusion"].astype(int) == 1).mean() * 100
+repeat_pct = (question_df["repeated_confusion"].astype(int) == 1).mean() * 100 if len(question_df) else 0
 col_g.metric("Rephrased repeat questions", f"{repeat_pct:.0f}%")
 st.caption("A high 'rephrased repeat' rate means students are asking the same thing in different words within one session — a strong signal that a topic wasn't clear the first time.")
 st.divider()
 
 # ------------------------------------------------------------------
-# 6. Cache size (quota-saving visibility — zero-budget setups care about this)
+# 6. Per-student view (build-order item 6, Aug 2026)
+# ------------------------------------------------------------------
+st.subheader("Per-student view")
+
+# NULL student_id handling (plan doc Section 1, "open decision"):
+# rows logged before Section 2 (per-student identity gate existed)
+# won't have a student_id. Bucket them under a clearly-labeled group
+# instead of silently dropping them or crashing on a NaN groupby key.
+df["student_id"] = df["student_id"].fillna("(name not given)")
+question_df["student_id"] = question_df["student_id"].fillna("(name not given)")
+diagnosis_df["student_id"] = diagnosis_df["student_id"].fillna("(name not given)")
+
+student_options = sorted(df["student_id"].unique().tolist())
+if not student_options:
+    st.info("No student activity yet.")
+else:
+    selected_student = st.selectbox("Student", student_options)
+    student_q = question_df[question_df["student_id"] == selected_student]
+    student_diag = diagnosis_df[diagnosis_df["student_id"] == selected_student]
+
+    col_j, col_k, col_l = st.columns(3)
+    col_j.metric("Questions asked", len(student_q))
+    col_k.metric("Answer-checks (photo)", len(student_diag))
+    col_l.metric(
+        "Rephrased repeats",
+        int(student_q["repeated_confusion"].astype(int).sum()) if len(student_q) else 0,
+    )
+
+    # Engagement — build-order item 3's research-backed metric (plan doc
+    # Section 10.2): "was the next attempt correct after a hint" is a
+    # MISLEADING metric — directly revealing an answer inflates apparent
+    # success without reflecting real understanding (10,000-submission
+    # study cited in the plan). Track hint-ENGAGEMENT instead.
+    # had_scaffold==1 restricts to rows where a scaffold genuinely
+    # existed — pre-migration/no-scaffold rows (had_scaffold is NULL,
+    # e.g. not_found) are excluded, not guessed at.
+    scaffolded = student_q[student_q["had_scaffold"] == 1]
+    if len(scaffolded) > 0:
+        engaged_pct = (scaffolded["used_full_reveal"] == 0).mean() * 100
+        st.metric("Engaged with hint before revealing full solution", f"{engaged_pct:.0f}%")
+        st.caption(
+            f"Based on {len(scaffolded)} question(s) where a hint was shown. This is the "
+            "primary engagement signal, not 'was the next attempt correct' — research shows "
+            "that metric is misleading, since revealing the answer directly inflates apparent "
+            "success without reflecting real understanding."
+        )
+    else:
+        st.caption("No scaffolded questions yet for this student.")
+
+    # Diagnosis match rate — kept SEPARATE from the AI-self-verification
+    # metric above (Section 4). "verified" means something different per
+    # mode: for diagnosis_v0 it's "did the student's photographed answer
+    # match," not "did the AI verify its own computation."
+    if len(student_diag) > 0:
+        matches = (student_diag["verified"].astype(str) == "True").sum()
+        st.metric("Photo answer-checks that matched", f"{matches} / {len(student_diag)}")
+
+    # Struggle signal: topics with a rephrased-repeat OR a diagnosis
+    # mismatch for this student specifically
+    struggle_sections = pd.concat([
+        student_q.loc[student_q["repeated_confusion"].astype(int) == 1, "matched_section"],
+        student_diag.loc[student_diag["verified"].astype(str) == "False", "matched_section"],
+    ])
+    struggle_sections = struggle_sections[struggle_sections.astype(bool)]  # blank sections drop
+    if len(struggle_sections) > 0:
+        st.caption("Topics where this student may need extra support:")
+        st.dataframe(
+            struggle_sections.value_counts().rename_axis("section").reset_index(name="count"),
+            width='stretch',
+            hide_index=True,
+        )
+
+st.divider()
+
+# ------------------------------------------------------------------
+# 7. Cache size (quota-saving visibility — zero-budget setups care about this)
 # ------------------------------------------------------------------
 st.subheader("Answer cache")
 try:

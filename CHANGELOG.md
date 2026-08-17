@@ -405,3 +405,56 @@ Scope note (jaan-boojh kar): dashboard.py mein diagnosis_v0 rows ko
 alag se dikhane wala koi UI nahi — raw data table mein `mode` column
 ke zariye visible hain, lekin dedicated view build-order item 6
 (per-student mastery dashboard) ka hissa hai, is turn ka nahi.
+
+## Next-phase build — Item 6: per-student mastery dashboard (Aug 2026)
+
+**11. `dashboard.py` mein naya "Per-student view" section — student
+selector, questions asked, photo answer-checks, hint-engagement %,
+diagnosis match rate, struggle-topics. Sath hi ek latent bug fix jo
+mentor ne review mein pehle hi flag kar diya tha.**
+
+**Latent bug fix (mentor ne 16 Aug ko explicitly warn kiya tha) —
+existing sections bhi affected thay, sirf naya tab nahi:** `verified`
+column ka meaning `mode` ke hisaab se badalta hai (`"question"` mode
+mein "AI ne apna computation khud verify kiya," `"diagnosis_v0"` mode
+mein "student ka answer match hua"). Dashboard ka **existing** "Answer
+grounding & verification" section `grounding == "adapted_by_ai"` se
+filter karta tha, `mode` se nahi — matlab diagnosis_v0 rows (jo design
+ke mutabiq ORIGINAL turn ka grounding reuse karti hain) is filter mein
+already aa rahi thi, aur combined "verified %" ko silently corrupt kar
+rahi thi. Yehi issue topic-heatmap (double-counting), time-trend, gap-
+alert, aur cache/repeat-rate sections mein bhi tha (sab reused fields
+par depend karte hain). Fix: course-filter ke turant baad ek
+`question_df`/`diagnosis_df` split — `df["mode"].fillna("question")`
+(purani, pre-migration rows ko "question" treat karte hain, diagnosis
+mode unse pehle exist hi nahi karta tha) phir `mode` se split. Sections
+1-5 (existing) ab `question_df` use karte hain, `df` nahi.
+
+**Naya schema addition, is turn discover hua:** `had_scaffold INTEGER`
+column — Section 1 ka wahi idempotent-migration pattern reuse kiya
+(`_MIGRATIONS` list mein ek aur statement). Wajah: `used_full_reveal`
+akela ye distinguish nahi kar sakta ke "student ne scaffold skip kiya"
+vs "scaffold available hi nahi tha" (app.py `used_full_reveal =
+(always_full or not has_scaffold)` compute karta hai — has_scaffold
+False hone par used_full_reveal FORCE True hota hai). Dashboard ka
+engagement-metric (evaluation-trap research se, Section 10.2) accurate
+nahi ban sakta tha is ambiguity ke sath. `app.py` ab `had_scaffold`
+explicitly pass karta hai; purani rows (is column se pehle) NULL
+rahengi aur engagement-metric se automatically exclude hoti hain
+(guess nahi karte, honestly exclude karte hain).
+
+Per-student section design: `student_id` NULL rows "(name not given)"
+bucket mein group hoti hain (crash/silent-drop nahi). Engagement %
+sirf `had_scaffold == 1` rows par compute hota hai. Diagnosis match
+rate ALAG metric hai, kabhi combine nahi hota AI-self-verification
+wale % se. Struggle-topics: rephrased-repeats + diagnosis mismatches
+dono se, per-student.
+
+Verified: `tests/test_question_log_store.py::TestHadScaffold` (2 naye
+tests) + updated migration test. Poori suite: 127/127 pass. `dashboard.py`
+khud unit-tested nahi hai (app.py jaisa top-level Streamlit script) —
+iski core pandas logic (mode-split, NULL handling, engagement-calc,
+struggle-topics) ek realistic synthetic 6-row dataset (2 students, mixed
+modes, NULL student_id, NULL had_scaffold) ke against manually run kar
+ke verify ki — sab assertions pass hue. `py_compile` + `pyflakes` clean
+on `dashboard.py`, `app.py`, `question_log_store.py`.

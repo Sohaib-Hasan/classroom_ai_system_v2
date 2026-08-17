@@ -254,7 +254,7 @@ def diagnose_answer(image_bytes, mime_type):
 # ------------------------------------------------------------------
 # Logging (question activity — teacher dashboard ke liye)
 # ------------------------------------------------------------------
-def log_question(question, course, chunks, answer, verified, repeated, cached, student_id, used_full_reveal, mode="question"):
+def log_question(question, course, chunks, answer, verified, repeated, cached, student_id, used_full_reveal, mode="question", had_scaffold=None):
     # FIX (bug jo student ne report kiya): pehle CSV file mein likha jata
     # tha, jo alag-deployed teacher dashboard app ko kabhi nazar nahi
     # aati thi. Ab shared connection (local ya Turso) mein likhte hain —
@@ -274,6 +274,7 @@ def log_question(question, course, chunks, answer, verified, repeated, cached, s
         student_id=student_id,
         used_full_reveal=used_full_reveal,
         mode=mode,
+        had_scaffold=had_scaffold,
     )
 
 
@@ -672,6 +673,7 @@ if question:
                         question, selected_course, chunks, answer, verified, repeated,
                         cached_hit is not None, st.session_state.student_id,
                         used_full_reveal=(always_full or not has_scaffold),
+                        had_scaffold=has_scaffold,
                     )
                 except Exception:
                     logger.exception(f"log_question failed (answer still shown): course={selected_course!r}, question={question!r}")

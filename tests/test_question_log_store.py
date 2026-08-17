@@ -129,6 +129,7 @@ class TestSchemaMigration:
         assert df.iloc[0]["student_id"] is None
         assert df.iloc[0]["used_full_reveal"] is None
         assert df.iloc[0]["mode"] is None
+        assert df.iloc[0]["had_scaffold"] is None
 
     def test_migration_is_idempotent_across_repeated_instantiation(self, tmp_path):
         # Streamlit Cloud har request/rerun par QuestionLogStore() naya
@@ -209,3 +210,38 @@ class TestRevealTracking:
         # logging khud fail ho gayi thi try/except mein), mark_revealed
         # ko None mil sakta hai — crash nahi hona chahiye
         store.mark_revealed(None)  # crash na ho, bas itna hi check hai
+class TestHadScaffold:
+    """Build-order item 6 (Aug 2026). used_full_reveal akela ye batane
+    ke liye kaafi nahi tha ke scaffold GENUINELY available tha ya nahi
+    (dekhein app.py: has_scaffold False hone par used_full_reveal FORCE
+    True hota hai) — had_scaffold is ambiguity ko explicitly resolve
+    karta hai, taake dashboard ka engagement-metric accurate ho."""
+
+    def test_defaults_to_none_when_not_provided(self, store):
+        # Diagnosis-mode rows (jinke liye scaffolding apply hi nahi hoti)
+        # ye default use karengi
+        store.log_question(
+            timestamp="2026-08-16T10:00:00", course="Calculus", question="q",
+            matched_chapter="", matched_section="", similarity=0.5,
+            grounding="adapted_by_ai", verified=True,
+            repeated_confusion=False, from_cache=False,
+        )
+        df = store.get_dataframe()
+        assert df.iloc[0]["had_scaffold"] is None
+
+    def test_stores_true_and_false_explicitly(self, store):
+        store.log_question(
+            timestamp="2026-08-16T10:00:00", course="Calculus", question="had scaffold",
+            matched_chapter="", matched_section="", similarity=0.5,
+            grounding="adapted_by_ai", verified=True,
+            repeated_confusion=False, from_cache=False, had_scaffold=True,
+        )
+        store.log_question(
+            timestamp="2026-08-16T10:01:00", course="Calculus", question="no scaffold (not_found)",
+            matched_chapter="", matched_section="", similarity=0.0,
+            grounding="not_found", verified=None,
+            repeated_confusion=False, from_cache=False, had_scaffold=False,
+        )
+        df = store.get_dataframe().set_index("question")
+        assert df.loc["had scaffold", "had_scaffold"] == 1
+        assert df.loc["no scaffold (not_found)", "had_scaffold"] == 0
