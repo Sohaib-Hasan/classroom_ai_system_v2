@@ -21,9 +21,9 @@ Turso setup (free, ek dafa karna hai):
     3. `turso db show classroom-ai --url` se DATABASE_URL milega
     4. `turso db tokens create classroom-ai` se AUTH_TOKEN milega
     5. DONO apps (teacher + student) ki Streamlit Secrets mein YE SAME 
-    do values daalein:
-        TURSO_DATABASE_URL = "https://classroomsystem-sohaibhasan.aws-ap-south-1.turso.io"
-        TURSO_AUTH_TOKEN = "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3ODYyMDQxMzgsImlkIjoiMDE5ZmQ2MDctMGQwMS03Mzk5LWEwYzEtNTVkY2FlMDRhMjU3Iiwia2lkIjoiUFAxSVNDbG5nN3kzVjlBc3laR050d1Y5dWFZcmJUUTlMbnB4N1JocDh1USIsInJpZCI6ImU3ZGYwMzgyLTY3ODYtNGY4Mi05YjlkLTg2NzNiNTZlZTRmMiJ9.LcqtYE6Q3VMW7J7yxHPpwzZZ5sSzH0FN8RcgB6mCOtQOTmIjcklMTcxbPabxM8RjOZXra3i14abew42oM8WgDg"
+   do values daalein:
+        TURSO_DATABASE_URL = "your-db-name.turso.io"
+        TURSO_AUTH_TOKEN = "..."
        (Same values dono jagah — tabhi wo same data share karenge.)
 
        ⚠️ FIX (README.md mein detail mila jo yahan missing thi): Turso CLI
