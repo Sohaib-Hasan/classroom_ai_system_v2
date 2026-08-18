@@ -87,25 +87,31 @@ class QuestionLogStore:
         self._apply_migrations()
 
     def _apply_migrations(self):
-        """Idempotent, safe to re-run har baar app start hone par.
-        Fresh DBs (student_id waghera already _SCHEMA mein) yahan
-        "duplicate column" hit karke chup-chaap skip ho jayenge. Purani,
-        already-deployed Turso table (jisme ye columns nahi thay jab
-        pehli baar bani thi) inhe yahan se add karegi. Sirf EXPECTED
-        error (column already exists) ko ignore karte hain — koi aur
-        wajah se fail ho (jaise connection hi na bane) to raise hoga,
-        chup nahi karayenge (Turso/network issues silently miss nahi
-        hone chahiyein)."""
+        """Idempotent schema migrations for SQLite and real Turso.
+
+        ALTER TABLE ... ADD COLUMN behaves differently across SQLite and
+        Turso/libsql when the column already exists. Instead of relying on
+        the duplicate-column error text, inspect the schema first and only
+        add columns that are actually missing.
+        """
         with self._lock:
+            rows = self._conn.execute(
+                "PRAGMA table_info(question_log)"
+            ).fetchall()
+
+            existing_columns = {row[1] for row in rows}
+
             for stmt in _MIGRATIONS:
-                try:
-                    self._conn.execute(stmt)
-                    self._conn.commit()
-                except Exception as e:
-                    msg = str(e).lower()
-                    if "duplicate column" in msg or "already exists" in msg:
-                        continue
-                    raise
+                # Each migration is:
+                # ALTER TABLE question_log ADD COLUMN <name> <type>
+                column_name = stmt.split("ADD COLUMN", 1)[1].strip().split()[0]
+
+                if column_name in existing_columns:
+                    continue
+
+                self._conn.execute(stmt)
+                self._conn.commit()
+                existing_columns.add(column_name)
 
     def log_question(self, timestamp, course, question, matched_chapter, matched_section,
                       similarity, grounding, verified, repeated_confusion, from_cache,
