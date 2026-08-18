@@ -20,11 +20,22 @@ Turso setup (free, ek dafa karna hai):
     2. Turso CLI se: `turso db create classroom-ai`
     3. `turso db show classroom-ai --url` se DATABASE_URL milega
     4. `turso db tokens create classroom-ai` se AUTH_TOKEN milega
-    5. DONO apps (teacher + student) ki Streamlit Secrets mein YE SAME
-       do values daalein:
-           TURSO_DATABASE_URL = "libsql://your-db-name.turso.io"
-           TURSO_AUTH_TOKEN = "..."
+    5. DONO apps (teacher + student) ki Streamlit Secrets mein YE SAME 
+    do values daalein:
+        TURSO_DATABASE_URL = "https://classroomsystem-sohaibhasan.aws-ap-south-1.turso.io"
+        TURSO_AUTH_TOKEN = "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3ODYyMDQxMzgsImlkIjoiMDE5ZmQ2MDctMGQwMS03Mzk5LWEwYzEtNTVkY2FlMDRhMjU3Iiwia2lkIjoiUFAxSVNDbG5nN3kzVjlBc3laR050d1Y5dWFZcmJUUTlMbnB4N1JocDh1USIsInJpZCI6ImU3ZGYwMzgyLTY3ODYtNGY4Mi05YjlkLTg2NzNiNTZlZTRmMiJ9.LcqtYE6Q3VMW7J7yxHPpwzZZ5sSzH0FN8RcgB6mCOtQOTmIjcklMTcxbPabxM8RjOZXra3i14abew42oM8WgDg"
        (Same values dono jagah — tabhi wo same data share karenge.)
+
+       ⚠️ FIX (README.md mein detail mila jo yahan missing thi): Turso CLI
+       ka `--url` command default `libsql://...` format deta hai — isko
+       MANUALLY `https://...` mein badlein (bas scheme badalta hai, host
+       wahi rehta hai). `libsql://` (WebSocket ke barabar) Streamlit
+       Cloud jaisi sandboxed environments mein handshake fail kar sakta
+       hai (`aiohttp.client_exceptions.WSServerHandshakeError`) —
+       `https://` ye masla poori tarah avoid karta hai, aur ye codebase
+       koi aisi Turso feature use nahi karta (transaction()/batch()) jo
+       sirf libsql:// se milti ho. Poori detail README.md ke "Shared
+       storage (Turso)" section mein hai.
 
 Agar TURSO_DATABASE_URL/TURSO_AUTH_TOKEN set nahi hain, system
 automatically local SQLite file par fall back karta hai — purana
