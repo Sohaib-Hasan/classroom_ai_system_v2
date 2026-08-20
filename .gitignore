@@ -1,6 +1,13 @@
 # Sensitive files
 config.py
 
+# Knowledge base (Aug 2026 fix — dekhein knowledge_base_loader.py):
+# 111MB+ hai, GitHub ki 100MB per-file hard limit se ZYADA hai (LFS ke
+# bina commit ho hi nahi sakti), aur LFS ka free bandwidth quota
+# repeated deploys se khatam ho jata hai. Ab GitHub Release se runtime
+# par download hoti hai — git mein bilkul commit NAHI honi chahiye.
+knowledge_base.json
+
 # Generated data
 cache/
 logs/
