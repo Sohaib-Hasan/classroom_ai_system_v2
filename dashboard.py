@@ -89,7 +89,7 @@ if len(df) == 0:
     st.info("No questions recorded yet. Once students start using the app, data will appear here.")
     st.stop()
 
-df["timestamp"] = pd.to_datetime(df["timestamp"])
+df["timestamp"] = pd.to_datetime(df["timestamp"], format="ISO8601", errors="coerce")
 df["date"] = df["timestamp"].dt.date
 
 # ------------------------------------------------------------------
