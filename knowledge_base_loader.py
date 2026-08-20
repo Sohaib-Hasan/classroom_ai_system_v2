@@ -38,7 +38,7 @@ import streamlit as st
 # page par asset link par right-click → "Copy link address" — pattern
 # hamesha ye hota hai:
 #   https://github.com/<user>/<repo>/releases/download/<tag>/<filename>
-KNOWLEDGE_BASE_URL = "https://github.com/Sohaib-Hasan/classroom_ai_system_v2/releases/download/REPLACE_WITH_YOUR_TAG/knowledge_base.json"
+KNOWLEDGE_BASE_URL = "https://github.com/Sohaib-Hasan/classroom_ai_system_v2/releases/download/kb-v1/knowledge_base.json"
 
 # LFS pointer files ~130 bytes hoti hain, asli file 100MB+ — 1MB
 # threshold in dono ke beech kaafi safe margin hai
